@@ -1,0 +1,88 @@
+[
+  {
+    "name": "Choose a pilot username before entering the galaxy",
+    "sanity": true,
+    "viewport": "mobile",
+    "covers": [
+      "pre-flight username form",
+      "username length validation",
+      "custom pilot name shown in multiplayer identity"
+    ],
+    "description": "Verifies a player must enter a valid display name before joining the live galaxy and that the chosen name is retained.",
+    "steps": [
+      "Open Galaxy Explorer",
+      "Try to enter with fewer than three characters",
+      "Enter a valid username such as StarRider and submit",
+      "Observe the pilot identity in the multiplayer panel"
+    ],
+    "expected": "Invalid short names are rejected; a valid chosen name starts the game and replaces the generated pilot name."
+  },
+  {
+    "name": "Pilot ships synchronize between two live players",
+    "viewport": "desktop",
+    "covers": [
+      "real-time multiplayer WebSocket connection",
+      "shared pilot positions and rotations",
+      "larger bright remote jet and visible username label",
+      "player presence and disconnect cleanup"
+    ],
+    "description": "Verifies two pilots can join the shared galaxy and see each other's larger, labelled ships moving live.",
+    "steps": [
+      "Actor A joins with username StarRider",
+      "Actor B joins in a second browser session with username NovaPilot",
+      "Move Actor B's ship and observe its enlarged jet and username label in Actor A's scene"
+    ],
+    "expected": "Both named pilots appear in the shared galaxy; each remote jet is visibly larger and easier to spot, and movement updates live."
+  },
+  {
+    "name": "Explore nine Solar System destinations",
+    "viewport": "desktop",
+    "covers": [
+      "Mercury Venus Earth Mars Jupiter Saturn Uranus Neptune and Pluto destinations",
+      "planet navigation and target selection",
+      "Pluto planetary surface"
+    ],
+    "description": "Verifies all nine named destinations are available to select and navigate toward.",
+    "steps": [
+      "Open the celestial body list",
+      "Select each of the nine destinations, including Pluto",
+      "Navigate toward Pluto and approach its surface"
+    ],
+    "expected": "Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune and Pluto are listed and Pluto can be approached and landed on."
+  },
+  {
+    "name": "Asteroid fields block the ship while the galaxy remains visible",
+    "viewport": "desktop",
+    "covers": [
+      "dense starfield",
+      "spiral galaxy star cloud and nebula effects",
+      "visible asteroid field",
+      "solid asteroid collision and speed impact"
+    ],
+    "description": "Verifies the Void contains visible cosmic scenery and asteroids that physically stop the ship.",
+    "steps": [
+      "Fly forward through the asteroid route",
+      "Approach a visible asteroid and attempt to pass through it",
+      "Change course around the asteroid"
+    ],
+    "expected": "Stars and a distant spiral galaxy remain visible; asteroid rocks visibly obstruct the ship, trigger impact feedback and require a course change."
+  },
+  {
+    "name": "Keep mobile controls and planetary exploration intact",
+    "viewport": "mobile",
+    "covers": [
+      "mobile touch steering and altitude controls",
+      "planetary landing and launch",
+      "surface collision and terrain exploration",
+      "mobile multiplayer presence panel"
+    ],
+    "description": "Verifies the updated Solar System still supports touch flight and surface exploration on mobile.",
+    "steps": [
+      "Join with a pilot username",
+      "Select Earth and navigate close enough to descend",
+      "Use ASCEND and DESCEND to explore the surface",
+      "Launch back to space and observe the pilot presence indicator"
+    ],
+    "expected": "Touch controls remain usable, planetary landing and launch work, and multiplayer presence remains visible."
+  }
+]
