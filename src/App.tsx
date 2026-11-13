@@ -654,6 +654,24 @@ function App() {
           });
         }
       }
+      state.remoteShips.forEach(remote => {
+        const targetPosition = remote.userData.targetPosition as THREE.Vector3 | undefined;
+        if (!targetPosition) return;
+
+        const smoothing = 1 - Math.exp(-12 * dt);
+        remote.position.lerp(targetPosition, smoothing);
+
+        const targetYaw = Number(remote.userData.targetYaw ?? remote.rotation.y);
+        const targetPitch = Number(remote.userData.targetPitch ?? remote.rotation.x);
+        const yawDifference = Math.atan2(
+          Math.sin(targetYaw - remote.rotation.y),
+          Math.cos(targetYaw - remote.rotation.y)
+        );
+
+        remote.rotation.y += yawDifference * smoothing;
+        remote.rotation.x += (targetPitch - remote.rotation.x) * smoothing;
+      });
+
       renderer.render(scene, camera);
       if (now - telemetryAt > 350) {
         telemetryAt = now;
@@ -711,7 +729,7 @@ function App() {
         const wing = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.14, 1.2), new THREE.MeshStandardMaterial({ color: 0x4b5f94, metalness: 0.65, roughness: 0.32 }));
         wing.position.z = 0.65;
         remote.add(wing);
-        remote.scale.setScalar(2.35);
+        remote.scale.setScalar(3.5);
         const locatorRing = new THREE.Mesh(
           new THREE.TorusGeometry(3.1, 0.12, 8, 36),
           new THREE.MeshBasicMaterial({ color: 0x5de7ff, transparent: true, opacity: 0.92 })
@@ -735,15 +753,23 @@ function App() {
         }
         const labelTexture = new THREE.CanvasTexture(labelCanvas);
         const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTexture, transparent: true, depthTest: false }));
-        label.scale.set(7.2, 1.8, 1);
-        label.position.y = 3.6;
+        label.scale.set(4.8, 1.2, 1);
+        label.position.y = 2.4;
         remote.add(label);
         remote.userData.playerId = player.id;
         state.scene.add(remote);
         state.remoteShips.set(player.id, remote);
       }
-      remote.position.set(Number(player.x), Number(player.y), Number(player.z));
-      remote.rotation.set(Number(player.pitch || 0), Number(player.yaw || 0), 0, 'YXZ');
+      const targetPosition = new THREE.Vector3(
+        Number(player.x), Number(player.y), Number(player.z)
+      );
+      if (!remote.userData.hasReceivedPosition) {
+        remote.position.copy(targetPosition);
+        remote.userData.hasReceivedPosition = true;
+      }
+      remote.userData.targetPosition = targetPosition;
+      remote.userData.targetYaw = Number(player.yaw || 0);
+      remote.userData.targetPitch = Number(player.pitch || 0);
       setOnlinePlayers(state.remoteShips.size + 1);
     };
 
@@ -762,9 +788,11 @@ function App() {
       setMultiplayerStatus('LIVE');
     }).catch(() => setMultiplayerStatus('OFFLINE'));
 
+    let heartbeatInFlight = false;
     heartbeat = window.setInterval(() => {
       const state = sceneRef.current;
-      if (!alive || !state || !connection.connectionId) return;
+      if (!alive || !state || !connection.connectionId || heartbeatInFlight) return;
+      heartbeatInFlight = true;
       api.post('/api/players', {
         id: pilotIdRef.current,
         name: pilotName,
@@ -774,8 +802,9 @@ function App() {
         yaw: Number(state.yaw.toFixed(3)),
         pitch: Number(state.pitch.toFixed(3)),
         connection_id: connection.connectionId,
-      }).catch(() => setMultiplayerStatus('OFFLINE'));
-    }, 700);
+      }).catch(() => setMultiplayerStatus('OFFLINE'))
+        .finally(() => { heartbeatInFlight = false; });
+    }, 120);
 
     return () => {
       alive = false;
