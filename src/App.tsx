@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { api, ws } from './appdeploy-client';
 import {
   Activity, Crosshair, Eye, EyeOff, Gauge, Globe2, Mountain, Radar,
@@ -55,7 +56,10 @@ type FlightScene = {
   surfaceObstacles: Map<string, SurfaceObstacle[]>;
   asteroids: Array<{ mesh: THREE.Mesh; radius: number }>;
   remoteShips: Map<string, THREE.Group>;
+  loadSurfaceTerrain: (planetId: string) => void;
 };
+
+const terrainHeightSamplers = new Map<string, (x: number, z: number) => number>();
 
 function terrainHeight(x: number, z: number, seed: number) {
   const broad = Math.sin(x * 0.018 + seed * 0.003) * 8 + Math.cos(z * 0.015 + seed * 0.002) * 7;
@@ -63,6 +67,95 @@ function terrainHeight(x: number, z: number, seed: number) {
   const peaks = Math.pow(Math.max(0, Math.sin(x * 0.009 + Math.cos(z * 0.012 + seed * 0.002) * 2)), 3) * 30;
   const curvature = -((x * x + z * z) / (760 * 760)) * 34;
   return broad + ridges + peaks + curvature;
+}
+
+// Deterministic impact basin with a raised crater rim.
+function impactCraterHeight(x: number, z: number, cx: number, cz: number, radius: number, depth: number) {
+  const distance = Math.hypot(x - cx, z - cz);
+  const bowl = -depth * Math.exp(-(distance * distance) / (radius * radius * 0.34));
+  const rimDistance = (distance - radius * 0.88) / (radius * 0.14);
+  const rim = depth * 0.24 * Math.exp(-(rimDistance * rimDistance));
+  return bowl + rim;
+}
+
+// Each explorable world has its own terrain profile.
+// Earth's original height function is deliberately preserved.
+function surfaceTerrainHeight(planetId: string, x: number, z: number, seed: number) {
+  const importedSampler = terrainHeightSamplers.get(planetId);
+  if (importedSampler) return importedSampler(x, z);
+  if (planetId === 'verdant') return terrainHeight(x, z, seed);
+
+  const edge = -((x * x + z * z) / (760 * 760)) * 18;
+  const variation = seed * 0.001;
+
+  switch (planetId) {
+    case 'aurelia': {
+      const craters =
+        impactCraterHeight(x, z, -145, -105, 82, 25) +
+        impactCraterHeight(x, z, 115, -170, 62, 19) +
+        impactCraterHeight(x, z, 155, 125, 94, 29) +
+        impactCraterHeight(x, z, -190, 175, 48, 16) +
+        impactCraterHeight(x, z, 5, 45, 38, 12);
+      const highlands = Math.pow(Math.max(0, Math.sin(x * 0.012 + Math.cos(z * 0.009) * 1.7)), 2) * 17;
+      return Math.sin(x * 0.014 + variation) * 3 + Math.cos(z * 0.017) * 3.5 + craters + highlands + edge;
+    }
+
+    case 'ignis': {
+      const volcanicRidges = Math.pow(Math.max(0, Math.sin((x + z) * 0.018 + variation)), 2) * 28;
+      const lavaBasins = -Math.pow(Math.max(0, Math.cos(x * 0.012 - z * 0.009)), 5) * 13;
+      const foldedCrust = Math.abs(Math.sin(x * 0.026 + Math.sin(z * 0.018) * 2)) * 9;
+      return Math.sin(x * 0.011) * 10 + Math.cos(z * 0.014) * 8 + volcanicRidges + lavaBasins + foldedCrust + edge;
+    }
+
+    case 'nyx': {
+      const canyonCenter = 95 * Math.sin(x * 0.008 + variation);
+      const canyon = -37 * Math.exp(-Math.pow((z - canyonCenter) / 27, 2));
+      const dunes = Math.sin(x * 0.021 + z * 0.006) * 8 + Math.sin(z * 0.032) * 5;
+      const mesas = Math.pow(Math.max(0, Math.sin(x * 0.012 + Math.cos(z * 0.01) * 1.8)), 3) * 29;
+      return canyon + dunes + mesas + edge;
+    }
+
+    case 'cinder': {
+      const cloudBands = Math.sin(z * 0.027 + Math.sin(x * 0.008) * 2.4) * 15;
+      const stormDistance = Math.hypot(x - 95, z + 65);
+      const storm = -24 * Math.exp(-(stormDistance * stormDistance) / 12500);
+      const cloudTowers = Math.pow(Math.max(0, Math.sin(x * 0.019 + z * 0.013)), 3) * 17;
+      return cloudBands + storm + cloudTowers + edge;
+    }
+
+    case 'thalassa': {
+      const fractures = Math.abs(Math.sin((x + z) * 0.023)) * 13;
+      const iceRidges = Math.pow(Math.max(0, Math.cos(x * 0.014 - z * 0.012)), 3) * 23;
+      const frozenBasins = -Math.pow(Math.max(0, Math.sin(z * 0.009 + x * 0.006)), 4) * 12;
+      return Math.sin(x * 0.012) * 7 + Math.cos(z * 0.016) * 6 + fractures + iceRidges + frozenBasins + edge;
+    }
+
+    case 'zephyr': {
+      const glacierRidges = Math.abs(Math.sin((x + z * 0.45) * 0.019)) * 19;
+      const frozenPlains = Math.sin(x * 0.009) * 5 + Math.cos(z * 0.011) * 6;
+      const icePeaks = Math.pow(Math.max(0, Math.sin(x * 0.013 + Math.cos(z * 0.008) * 2)), 4) * 35;
+      return glacierRidges + frozenPlains + icePeaks + edge;
+    }
+
+    case 'umbra': {
+      const trenchCenter = 80 * Math.sin(x * 0.007 + variation);
+      const abyss = -43 * Math.exp(-Math.pow((z - trenchCenter) / 31, 2));
+      const deepRidges = Math.sin((x - z) * 0.022) * 11;
+      const pressureRidges = Math.pow(Math.max(0, Math.cos(x * 0.015 + z * 0.009)), 3) * 27;
+      return abyss + deepRidges + pressureRidges + edge;
+    }
+
+    case 'pluto': {
+      const basinDistance = Math.hypot(x + 35, z - 25);
+      const frozenBasin = -27 * Math.exp(-(basinDistance * basinDistance) / 36000);
+      const iceMountains = Math.pow(Math.max(0, Math.sin(x * 0.013 + Math.cos(z * 0.012) * 2)), 3) * 31;
+      const frozenWaves = Math.sin(x * 0.018) * 4 + Math.cos(z * 0.019) * 5;
+      return frozenBasin + iceMountains + frozenWaves + edge;
+    }
+
+    default:
+      return terrainHeight(x, z, seed);
+  }
 }
 
 function makeEarthCity(group: THREE.Group, obstacles: SurfaceObstacle[], seed: number) {
@@ -91,7 +184,7 @@ function makeEarthCity(group: THREE.Group, obstacles: SurfaceObstacle[], seed: n
       for (const side of [-1, 1]) {
         const x = cx + px * width * side / 2;
         const z = cz + pz * width * side / 2;
-        vertices.push(x, terrainHeight(x, z, seed) + 0.48, z);
+        vertices.push(x, surfaceTerrainHeight('verdant', x, z, seed) + 0.48, z);
       }
       if (i < steps) {
         const a = i * 2;
@@ -134,7 +227,7 @@ function makeEarthCity(group: THREE.Group, obstacles: SurfaceObstacle[], seed: n
     const w = 11 + (i % 3) * 1.5;
     const d = 11 + ((i + 1) % 3) * 1.5;
     const h = i % 5 === 0 ? 22 + (i % 3) * 3 : 9 + (i % 4) * 2;
-    const ground = terrainHeight(x, z, seed);
+    const ground = surfaceTerrainHeight('verdant', x, z, seed);
     const building = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), walls[i % walls.length]);
     building.position.set(x, ground + h / 2, z);
     building.castShadow = true;
@@ -178,7 +271,7 @@ function makeEarthCity(group: THREE.Group, obstacles: SurfaceObstacle[], seed: n
       }
     }
     const start = route[i];
-    car.position.set(start.x, terrainHeight(start.x, start.y, seed) + 0.5, start.y);
+    car.position.set(start.x, surfaceTerrainHeight('verdant', start.x, start.y, seed) + 0.5, start.y);
     car.userData.route = route;
     car.userData.routeIndex = (i + 1) % route.length;
     car.userData.speed = 8 + (i % 2);
@@ -206,7 +299,7 @@ function makeEarthCity(group: THREE.Group, obstacles: SurfaceObstacle[], seed: n
     head.position.y = 3.05;
     person.add(head);
     const [start, end] = paths[i];
-    person.position.set(start.x, terrainHeight(start.x, start.y, seed) + 0.5, start.y);
+    person.position.set(start.x, surfaceTerrainHeight('verdant', start.x, start.y, seed) + 0.5, start.y);
     person.userData.walkStart = start;
     person.userData.walkEnd = end;
     person.userData.walkProgress = (i % 3) * 0.12;
@@ -227,16 +320,36 @@ function makeSurface(planet: Planet, groundY: number) {
   const positions = geometry.attributes.position as THREE.BufferAttribute;
   const colors: number[] = [];
   const obstacles: SurfaceObstacle[] = [];
-  const base = new THREE.Color(planet.color).multiplyScalar(0.58);
-  const high = new THREE.Color(planet.color).lerp(new THREE.Color('#ffffff'), 0.42);
+  const terrainPalettes: Record<string, { base: string; high: string; rock: string; mountain: string; roughness: number; metalness: number }> = {
+    aurelia: { base: '#514b45', high: '#c9b99d', rock: '#71685c', mountain: '#a1947f', roughness: 1, metalness: 0 },
+    ignis: { base: '#54241d', high: '#d77a43', rock: '#38201b', mountain: '#873b28', roughness: 0.96, metalness: 0.02 },
+    verdant: { base: '#000000', high: '#ffffff', rock: '#000000', mountain: '#000000', roughness: 1, metalness: 0 },
+    nyx: { base: '#603b2c', high: '#d08b59', rock: '#75452f', mountain: '#a95d3b', roughness: 1, metalness: 0 },
+    cinder: { base: '#76503c', high: '#e5ae78', rock: '#9b6547', mountain: '#bd8055', roughness: 0.94, metalness: 0.03 },
+    thalassa: { base: '#263e55', high: '#b5edf0', rock: '#547f91', mountain: '#8ac8d4', roughness: 0.48, metalness: 0.12 },
+    zephyr: { base: '#536b83', high: '#eff8ff', rock: '#8da8bd', mountain: '#c7e4f2', roughness: 0.38, metalness: 0.1 },
+    umbra: { base: '#142b48', high: '#5599c1', rock: '#315b7b', mountain: '#477fa5', roughness: 0.62, metalness: 0.12 },
+    pluto: { base: '#625765', high: '#e9dce0', rock: '#968795', mountain: '#c7b9c6', roughness: 0.72, metalness: 0.04 }
+  };
+  const palette = terrainPalettes[planet.id] ?? terrainPalettes.verdant;
+  const base = planet.id === 'verdant'
+    ? new THREE.Color(planet.color).multiplyScalar(0.58)
+    : new THREE.Color(palette.base);
+  const high = planet.id === 'verdant'
+    ? new THREE.Color(planet.color).lerp(new THREE.Color('#ffffff'), 0.42)
+    : new THREE.Color(palette.high);
   const terrainSeed = planet.id.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
   for (let i = 0; i < positions.count; i++) {
     const x = positions.getX(i);
     const z = positions.getZ(i);
-    const height = terrainHeight(x, z, terrainSeed);
+    const height = surfaceTerrainHeight(planet.id, x, z, terrainSeed);
     positions.setY(i, height);
     const tint = THREE.MathUtils.clamp((height + 22) / 65, 0, 1);
-    const color = base.clone().lerp(high, tint * 0.82);
+    const detail = (Math.sin(x * 0.061 + z * 0.047 + terrainSeed) + 1) * 0.5;
+    const blend = planet.id === 'verdant'
+      ? tint * 0.82
+      : THREE.MathUtils.clamp(tint * 0.68 + detail * 0.22, 0, 1);
+    const color = base.clone().lerp(high, blend);
     colors.push(color.r, color.g, color.b);
   }
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
@@ -245,23 +358,32 @@ function makeSurface(planet: Planet, groundY: number) {
     geometry,
     new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 })
   );
+  terrain.name = 'procedural-terrain-fallback';
   terrain.receiveShadow = true;
   group.add(terrain);
 
-  const rockMat = new THREE.MeshStandardMaterial({ color: high, roughness: 1 });
+  const rockMat = new THREE.MeshStandardMaterial({
+    color: planet.id === 'verdant' ? high : palette.rock,
+    roughness: palette.roughness,
+    metalness: palette.metalness
+  });
   for (let i = 0; i < 100; i++) {
     const x = Math.sin(i * 91.7) * 320;
     const z = Math.cos(i * 47.3) * 320;
     const radius = 1.2 + (i % 6) * 0.9;
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(radius, 0), rockMat);
-    const rockY = terrainHeight(x, z, terrainSeed) + radius * 0.55;
+    const rockY = surfaceTerrainHeight(planet.id, x, z, terrainSeed) + radius * 0.55;
     rock.position.set(x, rockY, z);
     rock.rotation.set(i * 0.31, i * 0.73, i * 0.19);
     group.add(rock);
     obstacles.push({ x, z, radius: radius + 2.5, topY: rockY + radius });
   }
 
-  const mountainMat = new THREE.MeshStandardMaterial({ color: high, roughness: 1 });
+  const mountainMat = new THREE.MeshStandardMaterial({
+    color: planet.id === 'verdant' ? high : palette.mountain,
+    roughness: palette.roughness,
+    metalness: palette.metalness
+  });
   for (let i = 0; i < 18; i++) {
     const x = Math.sin(i * 17.2) * 270;
     const z = -130 - Math.cos(i * 12.4) * 260;
@@ -270,20 +392,20 @@ function makeSurface(planet: Planet, groundY: number) {
       new THREE.ConeGeometry(18 + (i % 4) * 8, height, 7),
       mountainMat
     );
-    const mountainBase = terrainHeight(x, z, terrainSeed);
+    const mountainBase = surfaceTerrainHeight(planet.id, x, z, terrainSeed);
     mountain.position.set(x, mountainBase + height / 2, z);
     mountain.rotation.y = i * 0.7;
     group.add(mountain);
     obstacles.push({ x, z, radius: 20 + (i % 4) * 8, topY: mountainBase + height });
   }
 
-  if (['verdant', 'aurelia'].includes(planet.id)) {
+  if (planet.id === 'verdant') {
     const trunkMaterial = new THREE.MeshStandardMaterial({ color: '#65452f', roughness: 1 });
     const leafMaterial = new THREE.MeshStandardMaterial({ color: planet.id === 'verdant' ? '#287d4b' : '#397d68', roughness: 0.9 });
     for (let i = 0; i < 42; i++) {
       const x = Math.sin(i * 28.31 + terrainSeed) * 285;
       const z = Math.cos(i * 19.73 + terrainSeed) * 285;
-      const ground = terrainHeight(x, z, terrainSeed);
+      const ground = surfaceTerrainHeight(planet.id, x, z, terrainSeed);
       const trunkHeight = 7 + (i % 5) * 1.8;
       const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.25, trunkHeight, 7), trunkMaterial);
       trunk.position.set(x, ground + trunkHeight / 2, z);
@@ -308,7 +430,7 @@ function makeSurface(planet: Planet, groundY: number) {
     const fireMaterial = new THREE.MeshBasicMaterial({ color: '#ff9b22', transparent: true, opacity: 0.88 });
     const vents = [[-115, -145], [95, -220], [170, 90], [-190, 170]];
     vents.forEach(([x, z], index) => {
-      const ground = terrainHeight(x, z, terrainSeed);
+      const ground = surfaceTerrainHeight(planet.id, x, z, terrainSeed);
       const coneHeight = 36 + index * 9;
       const volcano = new THREE.Mesh(new THREE.ConeGeometry(24 + index * 3, coneHeight, 9), new THREE.MeshStandardMaterial({ color: '#4b2520', roughness: 1 }));
       volcano.position.set(x, ground + coneHeight / 2, z);
@@ -335,7 +457,7 @@ function makeSurface(planet: Planet, groundY: number) {
     for (let i = 0; i < 26; i++) {
       const x = Math.sin(i * 13.7 + terrainSeed) * 260;
       const z = Math.cos(i * 21.3 + terrainSeed) * 260;
-      const ground = terrainHeight(x, z, terrainSeed);
+      const ground = surfaceTerrainHeight(planet.id, x, z, terrainSeed);
       const crystal = new THREE.Mesh(new THREE.ConeGeometry(3 + i % 4, 12 + i % 6 * 3, 6), crystalMaterial);
       crystal.position.set(x, ground + 8, z);
       group.add(crystal);
@@ -343,16 +465,41 @@ function makeSurface(planet: Planet, groundY: number) {
     }
   }
 
-  if (planet.id === 'nyx' || planet.id === 'zephyr') {
+  if (['thalassa', 'zephyr', 'pluto'].includes(planet.id)) {
     const iceMaterial = new THREE.MeshStandardMaterial({ color: '#d7eaff', roughness: 0.28, metalness: 0.12 });
     for (let i = 0; i < 34; i++) {
       const x = Math.sin(i * 17.1 + terrainSeed) * 275;
       const z = Math.cos(i * 11.9 + terrainSeed) * 275;
-      const ground = terrainHeight(x, z, terrainSeed);
+      const ground = surfaceTerrainHeight(planet.id, x, z, terrainSeed);
       const shard = new THREE.Mesh(new THREE.ConeGeometry(3 + i % 4, 16 + i % 5 * 4, 5), iceMaterial);
       shard.position.set(x, ground + 9, z);
       group.add(shard);
       obstacles.push({ x, z, radius: 4.5, topY: ground + 20 });
+    }
+  }
+
+  // Mars gets broad, flat-topped mesas instead of ice formations.
+  if (planet.id === 'nyx') {
+    const mesaMaterial = new THREE.MeshStandardMaterial({
+      color: '#a96340',
+      roughness: 1
+    });
+    for (let i = 0; i < 12; i++) {
+      const x = Math.sin(i * 14.7 + terrainSeed) * 265;
+      const z = Math.cos(i * 19.1 + terrainSeed) * 265;
+      const ground = surfaceTerrainHeight(planet.id, x, z, terrainSeed);
+      const height = 12 + (i % 4) * 5;
+      const mesa = new THREE.Mesh(
+        new THREE.CylinderGeometry(10 + (i % 3) * 3, 19 + (i % 4) * 3, height, 7),
+        mesaMaterial
+      );
+      mesa.position.set(x, ground + height / 2, z);
+      mesa.rotation.y = i * 0.47;
+      group.add(mesa);
+      obstacles.push({
+        x, z, radius: 20 + (i % 4) * 3,
+        topY: ground + height
+      });
     }
   }
 
@@ -368,7 +515,7 @@ function makeSurface(planet: Planet, groundY: number) {
     const angle = i * Math.PI * 2 / 11;
     const x = Math.cos(angle) * (78 + (i % 3) * 19);
     const z = Math.sin(angle) * (78 + (i % 3) * 19) - 70;
-    const ground = terrainHeight(x, z, terrainSeed);
+    const ground = surfaceTerrainHeight(planet.id, x, z, terrainSeed);
     const height = 17 + (i % 4) * 9 + (planet.id === 'zephyr' ? 12 : 0);
     const width = 7 + (i % 3) * 2;
     const tower = new THREE.Mesh(new THREE.BoxGeometry(width, height, width), cityMaterial);
@@ -386,7 +533,7 @@ function makeSurface(planet: Planet, groundY: number) {
   }
   if (planet.id === 'verdant') makeEarthCity(group, obstacles, terrainSeed);
 
-  const landmarkGround = terrainHeight(0, -70, terrainSeed);
+  const landmarkGround = surfaceTerrainHeight(planet.id, 0, -70, terrainSeed);
   const landmark = new THREE.Mesh(new THREE.TorusGeometry(25, 2.8, 8, 40), cityMaterial);
   landmark.position.set(0, landmarkGround + 20, -70);
   landmark.rotation.x = Math.PI / 2;
@@ -439,7 +586,7 @@ function makeSurface(planet: Planet, groundY: number) {
     creature.scale.setScalar(speciesData.scale);
     const creatureX = -38;
     const creatureZ = -125;
-    creature.position.set(creatureX, terrainHeight(creatureX, creatureZ, terrainSeed) + 8, creatureZ);
+    creature.position.set(creatureX, surfaceTerrainHeight(planet.id, creatureX, creatureZ, terrainSeed) + 8, creatureZ);
     creature.userData.patrolX = creatureX;
     creature.userData.patrolZ = creatureZ;
     creature.userData.species = speciesData.name;
@@ -583,6 +730,10 @@ function App() {
     const planetGroups = new Map<string, THREE.Group>();
     const surfaces = new Map<string, THREE.Group>();
     const surfaceObstacles = new Map<string, SurfaceObstacle[]>();
+    const gltfLoader = new GLTFLoader();
+    const terrainLoading = new Set<string>();
+    const terrainLoaded = new Set<string>();
+    let sceneAlive = true;
 
     const planetTextureFiles: Record<string, { albedo: string; bump: string }> = {
       aurelia: {
@@ -868,8 +1019,184 @@ function App() {
       yaw: 0, pitch: 0, roll: 0, stars, mode: 'space',
       activePlanet: null, landingProgress: 0, surfaceGroundY: 0,
       originalBackground, originalFog, surfaceSky, autopilotTarget: null, surfaceObstacles,
-      asteroids, remoteShips: new Map<string, THREE.Group>(),
+      asteroids, remoteShips: new Map<string, THREE.Group>(), loadSurfaceTerrain: () => {},
     };
+    state.loadSurfaceTerrain = (planetId: string) => {
+      if (!sceneAlive || terrainLoading.has(planetId) || terrainLoaded.has(planetId)) return;
+
+      const assetNames: Record<string, string> = {
+        aurelia: 'mercury',
+        ignis: 'venus',
+        verdant: 'earth',
+        nyx: 'mars',
+        cinder: 'jupiter',
+        thalassa: 'saturn',
+        zephyr: 'uranus',
+        umbra: 'neptune',
+        pluto: 'pluto',
+      };
+
+      const assetName = assetNames[planetId];
+      if (!assetName) return;
+
+      terrainLoading.add(planetId);
+
+      gltfLoader.load(
+        `/assets/planet-landscapes/${assetName}_landscape.glb`,
+        (gltf) => {
+          terrainLoading.delete(planetId);
+
+          if (!sceneAlive) return;
+
+          let terrainMesh: THREE.Mesh | null = null;
+          gltf.scene.traverse((object) => {
+            if (!terrainMesh && object instanceof THREE.Mesh) {
+              terrainMesh = object;
+            }
+          });
+
+          if (!terrainMesh) {
+            console.warn(`No terrain mesh found for ${planetId}`);
+            return;
+          }
+
+          const position = terrainMesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+          const side = Math.round(Math.sqrt(position.count));
+
+          if (side * side !== position.count || side < 2) {
+            console.warn(`Unexpected terrain grid for ${planetId}`);
+            return;
+          }
+
+          let minX = Infinity;
+          let maxX = -Infinity;
+          let minZ = Infinity;
+          let maxZ = -Infinity;
+
+          for (let i = 0; i < position.count; i++) {
+            minX = Math.min(minX, position.getX(i));
+            maxX = Math.max(maxX, position.getX(i));
+            minZ = Math.min(minZ, position.getZ(i));
+            maxZ = Math.max(maxZ, position.getZ(i));
+          }
+
+          const heights = new Float32Array(side * side);
+
+          for (let i = 0; i < position.count; i++) {
+            const x = position.getX(i);
+            const y = position.getY(i);
+            const z = position.getZ(i);
+
+            const column = Math.round((x - minX) / (maxX - minX) * (side - 1));
+            const row = Math.round((z - minZ) / (maxZ - minZ) * (side - 1));
+
+            heights[row * side + column] = y;
+          }
+
+          const sampleTerrain = (x: number, z: number): number => {
+            const gx = THREE.MathUtils.clamp(
+              (x - minX) / (maxX - minX) * (side - 1), 0, side - 1
+            );
+            const gz = THREE.MathUtils.clamp(
+              (z - minZ) / (maxZ - minZ) * (side - 1), 0, side - 1
+            );
+
+            const x0 = Math.floor(gx);
+            const z0 = Math.floor(gz);
+            const x1 = Math.min(x0 + 1, side - 1);
+            const z1 = Math.min(z0 + 1, side - 1);
+            const tx = gx - x0;
+            const tz = gz - z0;
+
+            const h00 = heights[z0 * side + x0];
+            const h10 = heights[z0 * side + x1];
+            const h01 = heights[z1 * side + x0];
+            const h11 = heights[z1 * side + x1];
+
+            const top = THREE.MathUtils.lerp(h00, h10, tx);
+            const bottom = THREE.MathUtils.lerp(h01, h11, tx);
+
+            return THREE.MathUtils.lerp(top, bottom, tz);
+          };
+
+          terrainHeightSamplers.set(planetId, sampleTerrain);
+          terrainLoaded.add(planetId);
+
+          const existing = state.surfaces.get(planetId);
+          const planetData = planets.find((item) => item.id === planetId);
+
+          if (!existing || !planetData) return;
+
+          // Rebuild all surface features using the imported model's heights.
+          const oldPosition = existing.position.clone();
+          const rebuilt = makeSurface(planetData, oldPosition.y);
+
+          rebuilt.group.position.copy(oldPosition);
+          rebuilt.group.visible = existing.visible;
+
+          gltf.scene.name = 'planet-landscape-model';
+          gltf.scene.traverse((object) => {
+            if (object instanceof THREE.Mesh) {
+              object.castShadow = true;
+              object.receiveShadow = true;
+            }
+          });
+
+          rebuilt.group.add(gltf.scene);
+
+          // Remove the temporary procedural ground, not the surface features.
+          const fallback = rebuilt.group.getObjectByName('procedural-terrain-fallback');
+
+          if (fallback instanceof THREE.Mesh) {
+            fallback.parent?.remove(fallback);
+            fallback.geometry.dispose();
+
+            const materials = Array.isArray(fallback.material)
+              ? fallback.material
+              : [fallback.material];
+
+            materials.forEach((material) => material.dispose());
+          }
+
+          // Install the replacement before disposing the previous surface.
+          state.scene.add(rebuilt.group);
+          state.scene.remove(existing);
+
+          state.surfaces.set(planetId, rebuilt.group);
+          state.surfaceObstacles.set(planetId, rebuilt.obstacles);
+
+          existing.traverse((object) => {
+            if (object instanceof THREE.Mesh) {
+              object.geometry.dispose();
+
+              const materials = Array.isArray(object.material)
+                ? object.material
+                : [object.material];
+
+              materials.forEach((material) => material.dispose());
+            }
+          });
+
+          // Prevent the ship from remaining underground if loading finishes
+          // after the landing animation has already completed.
+          if (state.activePlanet === planetId && state.mode === 'surface') {
+            const localX = state.ship.position.x - rebuilt.group.position.x;
+            const localZ = state.ship.position.z - rebuilt.group.position.z;
+            const groundY = rebuilt.group.position.y + sampleTerrain(localX, localZ);
+
+            state.ship.position.y = Math.max(state.ship.position.y, groundY + 11);
+          }
+
+          console.log(`Detailed GLB terrain installed: ${planetId}`);
+        },
+        undefined,
+        (error) => {
+          terrainLoading.delete(planetId);
+          console.warn(`Could not load detailed terrain for ${planetId}; keeping fallback terrain.`, error);
+        }
+      );
+    };
+
     sceneRef.current = state;
     let frame = 0;
     let last = performance.now();
@@ -906,8 +1233,19 @@ function App() {
         state.landingProgress = Math.min(1, state.landingProgress + dt / 3.4);
         const t = state.landingProgress;
         const eased = t * t * (3 - 2 * t);
-        const targetY = state.surfaceGroundY + 11;
-        const startY = state.surfaceGroundY + 150;
+        const landingSurface = state.activePlanet
+          ? state.surfaces.get(state.activePlanet)
+          : null;
+        const landingSeed = state.activePlanet
+          ? state.activePlanet.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)
+          : 0;
+        const localLandingX = landingSurface ? ship.position.x - landingSurface.position.x : 0;
+        const localLandingZ = landingSurface ? ship.position.z - landingSurface.position.z : 0;
+        const terrainOffset = state.activePlanet
+          ? surfaceTerrainHeight(state.activePlanet, localLandingX, localLandingZ, landingSeed)
+          : 0;
+        const targetY = state.surfaceGroundY + terrainOffset + 11;
+        const startY = targetY + 139;
         ship.position.y = THREE.MathUtils.lerp(startY, targetY, eased);
         ship.position.x += Math.sin(now * 0.001) * dt * 0.6;
         camera.position.lerp(new THREE.Vector3(ship.position.x, ship.position.y + 7, ship.position.z + 19), 1 - Math.pow(0.001, dt));
@@ -976,7 +1314,7 @@ function App() {
             const originZ = surfaceOrigin?.z ?? surfacePlanet.position[2];
             const localX = ship.position.x - originX;
             const localZ = ship.position.z - originZ;
-            const groundY = state.surfaceGroundY + terrainHeight(localX, localZ, seed);
+            const groundY = state.surfaceGroundY + surfaceTerrainHeight(surfacePlanet.id, localX, localZ, seed);
             const obstacle = (state.surfaceObstacles.get(surfacePlanet.id) ?? []).find(item => Math.hypot(localX - item.x, localZ - item.z) < item.radius + 3 && ship.position.y < state.surfaceGroundY + item.topY + 8);
             if (obstacle) {
               ship.position.x = previousPosition.x;
@@ -985,7 +1323,7 @@ function App() {
               currentSpeed *= 0.22;
               if (now - telemetryAt > 900) setMessage('TERRAIN IMPACT · OBSTACLE AHEAD · CHANGE COURSE OR GAIN ALTITUDE');
             }
-            const safeGroundY = state.surfaceGroundY + terrainHeight(ship.position.x - originX, ship.position.z - originZ, seed) + 8;
+            const safeGroundY = state.surfaceGroundY + surfaceTerrainHeight(surfacePlanet.id, ship.position.x - originX, ship.position.z - originZ, seed) + 8;
             if (ship.position.y < safeGroundY) {
               ship.position.y = safeGroundY;
               currentSpeed *= 0.42;
@@ -1076,7 +1414,7 @@ function App() {
               const patrolZ = Number(child.userData.patrolZ ?? child.position.z);
               child.position.x = patrolX + Math.sin(now * 0.00045 + patrolZ) * 13;
               child.position.z = patrolZ + Math.cos(now * 0.00032 + patrolX) * 11;
-              child.position.y = terrainHeight(child.position.x, child.position.z, state.activePlanet!.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)) + 8 + Math.sin(now * 0.003) * 1.5;
+              child.position.y = surfaceTerrainHeight(state.activePlanet!, child.position.x, child.position.z, state.activePlanet!.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)) + 8 + Math.sin(now * 0.003) * 1.5;
               child.rotation.y = Math.sin(now * 0.0004) * 0.45;
               child.rotation.z = Math.sin(now * 0.0017) * 0.08;
             }
@@ -1111,6 +1449,7 @@ function App() {
     animate(performance.now());
 
     return () => {
+      sceneAlive = false;
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', keyDown);
@@ -1272,6 +1611,7 @@ function App() {
     state.autopilotTarget = null;
     state.mode = 'landing';
     state.activePlanet = planet.id;
+    state.loadSurfaceTerrain(planet.id);
     state.landingProgress = 0;
     state.surfaceGroundY = surfaceY;
     state.keys.clear();
