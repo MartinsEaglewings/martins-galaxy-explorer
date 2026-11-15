@@ -65,6 +65,158 @@ function terrainHeight(x: number, z: number, seed: number) {
   return broad + ridges + peaks + curvature;
 }
 
+function makeEarthCity(group: THREE.Group, obstacles: SurfaceObstacle[], seed: number) {
+  const asphalt = new THREE.MeshStandardMaterial({ color: '#303943', roughness: 0.96 });
+  const pavement = new THREE.MeshStandardMaterial({ color: '#aeb5b6', roughness: 1 });
+  const lines = new THREE.MeshBasicMaterial({ color: '#f4e6ad' });
+  const walls = ['#e8d8bd', '#c9d5d7', '#d9b99b', '#b8c9ae', '#d7d1c4'].map(
+    color => new THREE.MeshStandardMaterial({ color, roughness: 0.9 })
+  );
+  const roofs = ['#654b42', '#46545d', '#795d48'].map(
+    color => new THREE.MeshStandardMaterial({ color, roughness: 0.95 })
+  );
+  const glass = new THREE.MeshStandardMaterial({ color: '#8bd6ed', emissive: '#245b70', emissiveIntensity: 0.3 });
+  const dark = new THREE.MeshStandardMaterial({ color: '#60432f' });
+
+  const strip = (x1: number, z1: number, x2: number, z2: number, width: number, offset: number, material: THREE.Material) => {
+    const dx = x2 - x1, dz = z2 - z1;
+    const length = Math.hypot(dx, dz);
+    const px = -dz / length, pz = dx / length;
+    const steps = Math.max(12, Math.ceil(length / 7));
+    const vertices: number[] = [], indices: number[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const cx = x1 + dx * t + px * offset;
+      const cz = z1 + dz * t + pz * offset;
+      for (const side of [-1, 1]) {
+        const x = cx + px * width * side / 2;
+        const z = cz + pz * width * side / 2;
+        vertices.push(x, terrainHeight(x, z, seed) + 0.48, z);
+      }
+      if (i < steps) {
+        const a = i * 2;
+        indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  };
+
+  const horizontal = [-160, -70, 20];
+  const vertical = [-90, 0, 90];
+  horizontal.forEach(z => {
+    strip(-125, z, 125, z, 9, 0, asphalt);
+    strip(-125, z, 125, z, 3, 7.5, pavement);
+    strip(-125, z, 125, z, 3, -7.5, pavement);
+    for (let x = -112; x <= 112; x += 25) strip(x, z, x + 10, z, 0.28, 0, lines);
+  });
+  vertical.forEach(x => {
+    strip(x, -195, x, 55, 9, 0, asphalt);
+    strip(x, -195, x, 55, 3, 7.5, pavement);
+    strip(x, -195, x, 55, 3, -7.5, pavement);
+    for (let z = -185; z <= 45; z += 25) strip(x, z, x, z + 10, 0.28, 0, lines);
+  });
+
+  const spots: Array<[number, number]> = [];
+  for (const cx of [-45, 45]) {
+    for (const cz of [-115, -25]) {
+      for (const ox of [-18, 18]) {
+        for (const oz of [-18, 18]) spots.push([cx + ox, cz + oz]);
+      }
+    }
+  }
+  spots.forEach(([x, z], i) => {
+    const w = 11 + (i % 3) * 1.5;
+    const d = 11 + ((i + 1) % 3) * 1.5;
+    const h = i % 5 === 0 ? 22 + (i % 3) * 3 : 9 + (i % 4) * 2;
+    const ground = terrainHeight(x, z, seed);
+    const building = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), walls[i % walls.length]);
+    building.position.set(x, ground + h / 2, z);
+    building.castShadow = true;
+    group.add(building);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.8, 1.1, d + 0.8), roofs[i % roofs.length]);
+    roof.position.set(x, ground + h + 0.55, z);
+    group.add(roof);
+    for (const side of [-1, 1]) {
+      const windowMesh = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.8, 0.22), glass);
+      windowMesh.position.set(x + side * w * 0.24, ground + 3.1, z - d / 2 - 0.13);
+      group.add(windowMesh);
+    }
+    const door = new THREE.Mesh(new THREE.BoxGeometry(1.7, 2.8, 0.25), dark);
+    door.position.set(x, ground + 1.4, z - d / 2 - 0.16);
+    group.add(door);
+    obstacles.push({ x, z, radius: Math.max(w, d) * 0.72 + 2, topY: ground + h + 2 });
+  });
+
+  const route = [
+    new THREE.Vector2(-90, -160), new THREE.Vector2(90, -160),
+    new THREE.Vector2(90, 20), new THREE.Vector2(-90, 20)
+  ];
+  const carPaint = new THREE.MeshStandardMaterial({ color: '#d83f32', metalness: 0.3, roughness: 0.4 });
+  const carGlass = new THREE.MeshStandardMaterial({ color: '#243b4b', metalness: 0.3, roughness: 0.2 });
+  const wheels = new THREE.MeshStandardMaterial({ color: '#15191e' });
+  for (let i = 0; i < 4; i++) {
+    const car = new THREE.Group();
+    car.name = 'earth-car';
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.5, 1.25, 6), carPaint);
+    body.position.y = 1.15;
+    car.add(body);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.7, 1.25, 2.9), carGlass);
+    cabin.position.set(0, 2.15, 0.25);
+    car.add(cabin);
+    for (const side of [-1, 1]) {
+      for (const front of [-1, 1]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.38, 10), wheels);
+        wheel.rotation.z = Math.PI / 2;
+        wheel.position.set(side * 1.82, 0.72, front * 1.9);
+        car.add(wheel);
+      }
+    }
+    const start = route[i];
+    car.position.set(start.x, terrainHeight(start.x, start.y, seed) + 0.5, start.y);
+    car.userData.route = route;
+    car.userData.routeIndex = (i + 1) % route.length;
+    car.userData.speed = 8 + (i % 2);
+    group.add(car);
+  }
+
+  const paths: Array<[THREE.Vector2, THREE.Vector2]> = [];
+  horizontal.forEach(z => {
+    paths.push([new THREE.Vector2(-115, z - 7.5), new THREE.Vector2(115, z - 7.5)]);
+    paths.push([new THREE.Vector2(115, z + 7.5), new THREE.Vector2(-115, z + 7.5)]);
+  });
+  vertical.forEach(x => {
+    paths.push([new THREE.Vector2(x - 7.5, -185), new THREE.Vector2(x - 7.5, 45)]);
+    paths.push([new THREE.Vector2(x + 7.5, 45), new THREE.Vector2(x + 7.5, -185)]);
+  });
+  const clothes = new THREE.MeshStandardMaterial({ color: '#e9a34b' });
+  const skin = new THREE.MeshStandardMaterial({ color: '#986342' });
+  for (let i = 0; i < 10; i++) {
+    const person = new THREE.Group();
+    person.name = 'earth-pedestrian';
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 2.1, 8), clothes);
+    torso.position.y = 1.7;
+    person.add(torso);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.48, 10, 8), skin);
+    head.position.y = 3.05;
+    person.add(head);
+    const [start, end] = paths[i];
+    person.position.set(start.x, terrainHeight(start.x, start.y, seed) + 0.5, start.y);
+    person.userData.walkStart = start;
+    person.userData.walkEnd = end;
+    person.userData.walkProgress = (i % 3) * 0.12;
+    person.userData.walkDirection = 1;
+    person.userData.walkSpeed = 3.1 + (i % 3) * 0.35;
+    group.add(person);
+  }
+}
+
+
 function makeSurface(planet: Planet, groundY: number) {
   const group = new THREE.Group();
   group.position.set(planet.position[0], groundY, planet.position[2]);
@@ -211,6 +363,7 @@ function makeSurface(planet: Planet, groundY: number) {
   };
   const cityMaterial = new THREE.MeshStandardMaterial({ color: cityPalettes[planet.id], emissive: cityPalettes[planet.id], emissiveIntensity: 0.16, metalness: 0.42, roughness: 0.48 });
   const windowMaterial = new THREE.MeshBasicMaterial({ color: planet.id === 'ignis' ? '#ffbd72' : '#9ceaff' });
+  if (planet.id !== 'verdant') {
   for (let i = 0; i < 11; i++) {
     const angle = i * Math.PI * 2 / 11;
     const x = Math.cos(angle) * (78 + (i % 3) * 19);
@@ -230,6 +383,9 @@ function makeSurface(planet: Planet, groundY: number) {
     group.add(beacon);
     obstacles.push({ x, z, radius: width * 0.8, topY: ground + height + 8 });
   }
+  }
+  if (planet.id === 'verdant') makeEarthCity(group, obstacles, terrainSeed);
+
   const landmarkGround = terrainHeight(0, -70, terrainSeed);
   const landmark = new THREE.Mesh(new THREE.TorusGeometry(25, 2.8, 8, 40), cityMaterial);
   landmark.position.set(0, landmarkGround + 20, -70);
@@ -395,38 +551,269 @@ function App() {
     }
     scene.add(asteroidField);
 
+    const sunPosition = new THREE.Vector3(0, 0, -6500);
+
+    const orbitSettings: Record<string, {
+      radius: number;
+      eccentricity: number;
+      speed: number;
+      phase: number;
+      inclination: number;
+    }> = {
+      aurelia: { radius: 420, eccentricity: 0.06, speed: 0.075, phase: 0.1, inclination: 8 },
+      ignis: { radius: 620, eccentricity: 0.04, speed: 0.055, phase: 1.1, inclination: 12 },
+      verdant: { radius: 850, eccentricity: 0.035, speed: 0.045, phase: 2.2, inclination: 7 },
+      nyx: { radius: 1120, eccentricity: 0.07, speed: 0.036, phase: 3.1, inclination: 18 },
+      cinder: { radius: 1650, eccentricity: 0.045, speed: 0.022, phase: 4.0, inclination: 24 },
+      thalassa: { radius: 2150, eccentricity: 0.055, speed: 0.017, phase: 5.0, inclination: 30 },
+      zephyr: { radius: 2650, eccentricity: 0.035, speed: 0.013, phase: 2.7, inclination: 36 },
+      umbra: { radius: 3150, eccentricity: 0.04, speed: 0.010, phase: 4.8, inclination: 42 },
+      pluto: { radius: 3600, eccentricity: 0.12, speed: 0.008, phase: 0.7, inclination: 48 },
+    };
+
+    const getOrbitPosition = (
+      settings: typeof orbitSettings[string],
+      angle: number
+    ) => new THREE.Vector3(
+      sunPosition.x + Math.cos(angle) * settings.radius * (1 - settings.eccentricity),
+      sunPosition.y + Math.sin(angle * 0.7) * settings.inclination,
+      sunPosition.z + Math.sin(angle) * settings.radius
+    );
+
     const planetGroups = new Map<string, THREE.Group>();
     const surfaces = new Map<string, THREE.Group>();
     const surfaceObstacles = new Map<string, SurfaceObstacle[]>();
-    initialPlanets.forEach((planet, index) => {
+
+    const planetTextureFiles: Record<string, { albedo: string; bump: string }> = {
+      aurelia: {
+        albedo: new URL('./assets/textures/mercury-albedo.png', import.meta.url).href,
+        bump: new URL('./assets/textures/mercury-bump.png', import.meta.url).href,
+      },
+      ignis: {
+        albedo: new URL('./assets/textures/venus-albedo.png', import.meta.url).href,
+        bump: new URL('./assets/textures/venus-bump.png', import.meta.url).href,
+      },
+      verdant: {
+        albedo: new URL('./assets/textures/earth-albedo.png', import.meta.url).href,
+        bump: new URL('./assets/textures/earth-bump.png', import.meta.url).href,
+      },
+      nyx: {
+        albedo: new URL('./assets/textures/mars-albedo.png', import.meta.url).href,
+        bump: new URL('./assets/textures/mars-bump.png', import.meta.url).href,
+      },
+      cinder: {
+        albedo: new URL('./assets/textures/jupiter-albedo.png', import.meta.url).href,
+        bump: new URL('./assets/textures/jupiter-bump.png', import.meta.url).href,
+      },
+      thalassa: {
+        albedo: new URL('./assets/textures/saturn-albedo.png', import.meta.url).href,
+        bump: new URL('./assets/textures/saturn-bump.png', import.meta.url).href,
+      },
+      zephyr: {
+        albedo: new URL('./assets/textures/uranus-albedo.png', import.meta.url).href,
+        bump: new URL('./assets/textures/uranus-bump.png', import.meta.url).href,
+      },
+      umbra: {
+        albedo: new URL('./assets/textures/neptune-albedo.png', import.meta.url).href,
+        bump: new URL('./assets/textures/neptune-bump.png', import.meta.url).href,
+      },
+      pluto: {
+        albedo: new URL('./assets/textures/pluto-albedo.png', import.meta.url).href,
+        bump: new URL('./assets/textures/pluto-bump.png', import.meta.url).href,
+      },
+    };
+
+    const planetTextures: THREE.Texture[] = [];
+    const textureLoader = new THREE.TextureLoader();
+
+    const loadPlanetTexture = (url: string, isColor = false) => {
+      const texture = textureLoader.load(url);
+      if (isColor) texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+      planetTextures.push(texture);
+      return texture;
+    };
+
+    const earthCloudTexture = loadPlanetTexture(
+      new URL('./assets/textures/earth-clouds.png', import.meta.url).href,
+      true
+    );
+    const earthNightTexture = loadPlanetTexture(
+      new URL('./assets/textures/earth-night-lights.png', import.meta.url).href,
+      true
+    );
+    const saturnRingTexture = loadPlanetTexture(
+      new URL('./assets/textures/saturn-rings.png', import.meta.url).href,
+      true
+    );
+    const sunTexture = loadPlanetTexture(
+      new URL('./assets/textures/sun-emissive.png', import.meta.url).href,
+      true
+    );
+    const moonAlbedo = loadPlanetTexture(
+      new URL('./assets/textures/moon-albedo.png', import.meta.url).href,
+      true
+    );
+    const moonBump = loadPlanetTexture(
+      new URL('./assets/textures/moon-bump.png', import.meta.url).href
+    );
+
+    const sunGroup = new THREE.Group();
+    sunGroup.name = 'solar-sun';
+    sunGroup.position.copy(sunPosition);
+
+    const sunMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(88, 48, 36),
+      new THREE.MeshBasicMaterial({ map: sunTexture })
+    );
+    sunMesh.name = 'sun-surface';
+    sunGroup.add(sunMesh);
+
+    const sunGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(108, 40, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xffa34d,
+        transparent: true,
+        opacity: 0.19,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    sunGlow.name = 'sun-corona';
+    sunGroup.add(sunGlow);
+    scene.add(sunGroup);
+
+    const sunlight = new THREE.PointLight(0xffd4a0, 1800, 18000, 2);
+    sunlight.position.copy(sunPosition);
+    scene.add(sunlight);
+
+    const orbitGroup = new THREE.Group();
+    orbitGroup.name = 'planetary-orbit-paths';
+
+    Object.entries(orbitSettings).forEach(([id, settings]) => {
+      const points: THREE.Vector3[] = [];
+      for (let i = 0; i < 180; i++) {
+        points.push(getOrbitPosition(settings, (i / 180) * Math.PI * 2));
+      }
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const material = new THREE.LineBasicMaterial({
+        color: 0x6685aa,
+        transparent: true,
+        opacity: 0.24,
+        depthWrite: false,
+      });
+      const orbit = new THREE.LineLoop(geometry, material);
+      orbit.name = `orbit-path-${id}`;
+      orbitGroup.add(orbit);
+    });
+
+    scene.add(orbitGroup);
+
+    const earthMoonPivot = new THREE.Group();
+    earthMoonPivot.name = 'earth-moon-orbit';
+
+    initialPlanets.forEach((planet) => {
       const group = new THREE.Group();
-      group.position.set(...planet.position);
+      const orbit = orbitSettings[planet.id];
+      group.position.copy(getOrbitPosition(orbit, orbit.phase));
+      group.name = `planet-group-${planet.id}`;
+
+      const textures = planetTextureFiles[planet.id];
+      if (!textures) throw new Error(`Missing planetary textures for ${planet.id}`);
+
+      const albedo = loadPlanetTexture(textures.albedo, true);
+      const bump = loadPlanetTexture(textures.bump);
+
+      const bodyMaterial = new THREE.MeshStandardMaterial({
+        map: albedo,
+        bumpMap: bump,
+        bumpScale: planet.id === 'verdant' ? 0.7 : 1.05,
+        roughness: 0.92,
+        metalness: 0.0,
+      });
+
       const globe = new THREE.Mesh(
-        new THREE.SphereGeometry(planet.size, 48, 36),
-        new THREE.MeshStandardMaterial({ color: planet.color, roughness: 0.82, metalness: 0.05, emissive: planet.color, emissiveIntensity: 0.16 })
+        new THREE.SphereGeometry(planet.size, 64, 48),
+        bodyMaterial
       );
+      globe.name = 'planet-surface';
       group.add(globe);
+
+      if (planet.id === 'verdant') {
+        const clouds = new THREE.Mesh(
+          new THREE.SphereGeometry(planet.size * 1.012, 64, 48),
+          new THREE.MeshLambertMaterial({
+            map: earthCloudTexture,
+            transparent: true,
+            opacity: 0.76,
+            depthWrite: false,
+          })
+        );
+        clouds.name = 'earth-cloud-layer';
+        group.add(clouds);
+
+        const nightLights = new THREE.Mesh(
+          new THREE.SphereGeometry(planet.size * 1.004, 64, 48),
+          new THREE.MeshBasicMaterial({
+            map: earthNightTexture,
+            transparent: true,
+            opacity: 0.62,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          })
+        );
+        nightLights.name = 'earth-night-lights';
+        group.add(nightLights);
+      }
+
+      if (planet.id === 'thalassa') {
+        const rings = new THREE.Mesh(
+          new THREE.RingGeometry(planet.size * 1.35, planet.size * 2.45, 160),
+          new THREE.MeshBasicMaterial({
+            map: saturnRingTexture,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.94,
+            depthWrite: false,
+          })
+        );
+        rings.name = 'saturn-rings';
+        rings.rotation.x = -Math.PI / 2.35;
+        group.add(rings);
+      }
+
       const atmosphere = new THREE.Mesh(
         new THREE.SphereGeometry(planet.size * 1.16, 40, 28),
-        new THREE.MeshBasicMaterial({ color: planet.color, transparent: true, opacity: 0.2, side: THREE.BackSide, depthWrite: false })
+        new THREE.MeshBasicMaterial({
+          color: planet.color,
+          transparent: true,
+          opacity: planet.id === 'verdant' ? 0.16 : 0.11,
+          side: THREE.BackSide,
+          depthWrite: false,
+        })
       );
+      atmosphere.name = 'planet-atmosphere';
       group.add(atmosphere);
-      if (index === 0 || index === 3 || index === 5 || index === 7) {
-        const ring = new THREE.Mesh(
-          new THREE.RingGeometry(planet.size * 1.35, planet.size * 1.85, 96),
-          new THREE.MeshBasicMaterial({ color: index === 0 ? 0x7edcff : 0xb9a8ff, side: THREE.DoubleSide, transparent: true, opacity: 0.48 })
+
+      if (planet.id === 'verdant') {
+        const moon = new THREE.Mesh(
+          new THREE.SphereGeometry(6.2, 40, 32),
+          new THREE.MeshStandardMaterial({
+            map: moonAlbedo,
+            bumpMap: moonBump,
+            bumpScale: 0.75,
+            roughness: 1,
+          })
         );
-        ring.rotation.x = Math.PI / 2.25;
-        group.add(ring);
+        moon.name = 'earth-moon';
+        moon.position.set(55, 3, 0);
+        earthMoonPivot.add(moon);
+        group.add(earthMoonPivot);
       }
-      const moon = new THREE.Mesh(
-        new THREE.SphereGeometry(planet.size * 0.13, 18, 14),
-        new THREE.MeshStandardMaterial({ color: 0xb9c5d8, roughness: 1 })
-      );
-      moon.position.set(planet.size * 1.7, planet.size * 0.55, planet.size * 0.6);
-      group.add(moon);
+
       scene.add(group);
       planetGroups.set(planet.id, group);
+
       const surfaceData = makeSurface(planet, planet.position[1] + planet.size);
       surfaceData.group.visible = false;
       scene.add(surfaceData.group);
@@ -488,6 +875,12 @@ function App() {
     let last = performance.now();
     let currentSpeed = 0;
     let telemetryAt = 0;
+    let mapTelemetryAt = 0;
+
+    const orbitAngles: Record<string, number> = {};
+    Object.entries(orbitSettings).forEach(([id, settings]) => {
+      orbitAngles[id] = settings.phase;
+    });
 
     const resize = () => {
       camera.aspect = host.clientWidth / host.clientHeight;
@@ -537,8 +930,11 @@ function App() {
         const turn = (state.mode === 'surface' ? 0.95 : 1.25) * dt;
         if (state.autopilotTarget && state.mode === 'space') {
           const destination = initialPlanets.find(item => item.id === state.autopilotTarget);
-          if (destination) {
-            const delta = new THREE.Vector3(...destination.position).sub(ship.position);
+          const liveDestination = destination
+            ? state.planets.get(destination.id)
+            : undefined;
+          if (destination && liveDestination) {
+            const delta = liveDestination.position.clone().sub(ship.position);
             const desiredYaw = Math.atan2(-delta.x, -delta.z);
             const desiredPitch = Math.atan2(delta.y, Math.hypot(delta.x, delta.z));
             const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
@@ -575,8 +971,11 @@ function App() {
           const surfacePlanet = initialPlanets.find(item => item.id === state.activePlanet);
           if (surfacePlanet) {
             const seed = surfacePlanet.id.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
-            const localX = ship.position.x - surfacePlanet.position[0];
-            const localZ = ship.position.z - surfacePlanet.position[2];
+            const surfaceOrigin = state.surfaces.get(surfacePlanet.id)?.position;
+            const originX = surfaceOrigin?.x ?? surfacePlanet.position[0];
+            const originZ = surfaceOrigin?.z ?? surfacePlanet.position[2];
+            const localX = ship.position.x - originX;
+            const localZ = ship.position.z - originZ;
             const groundY = state.surfaceGroundY + terrainHeight(localX, localZ, seed);
             const obstacle = (state.surfaceObstacles.get(surfacePlanet.id) ?? []).find(item => Math.hypot(localX - item.x, localZ - item.z) < item.radius + 3 && ship.position.y < state.surfaceGroundY + item.topY + 8);
             if (obstacle) {
@@ -586,7 +985,7 @@ function App() {
               currentSpeed *= 0.22;
               if (now - telemetryAt > 900) setMessage('TERRAIN IMPACT · OBSTACLE AHEAD · CHANGE COURSE OR GAIN ALTITUDE');
             }
-            const safeGroundY = state.surfaceGroundY + terrainHeight(ship.position.x - surfacePlanet.position[0], ship.position.z - surfacePlanet.position[2], seed) + 8;
+            const safeGroundY = state.surfaceGroundY + terrainHeight(ship.position.x - originX, ship.position.z - originZ, seed) + 8;
             if (ship.position.y < safeGroundY) {
               ship.position.y = safeGroundY;
               currentSpeed *= 0.42;
@@ -607,6 +1006,16 @@ function App() {
       }
 
       if (state.mode === 'space') {
+        Object.entries(orbitSettings).forEach(([id, settings]) => {
+          orbitAngles[id] += dt * settings.speed;
+          const body = planetGroups.get(id);
+          if (body) body.position.copy(getOrbitPosition(settings, orbitAngles[id]));
+        });
+
+        earthMoonPivot.rotation.y += dt * 0.19;
+        sunMesh.rotation.y += dt * 0.025;
+        sunGlow.rotation.y -= dt * 0.012;
+
         stars.rotation.y += dt * 0.0015;
         galaxy.rotation.z += dt * 0.000035;
         state.asteroids.forEach(item => { item.mesh.rotation.x += dt * 0.035; item.mesh.rotation.y += dt * 0.022; });
@@ -615,6 +1024,8 @@ function App() {
           const planet = initialPlanets[planetIndex];
           if (!planet) return;
           group.rotation.y += dt * (0.025 + planetIndex * 0.006);
+          const earthClouds = group.getObjectByName('earth-cloud-layer');
+          if (earthClouds) earthClouds.rotation.y += dt * 0.025;
           const distance = camera.position.distanceTo(group.position);
           const atmosphere = group.children.find(child => child instanceof THREE.Mesh && child.geometry instanceof THREE.SphereGeometry && (child.geometry.parameters.radius ?? 0) > planet.size * 1.1) as THREE.Mesh | undefined;
           if (atmosphere && atmosphere.material instanceof THREE.MeshBasicMaterial) {
@@ -624,7 +1035,9 @@ function App() {
         let closest: string | null = null;
         let closestDistance = Infinity;
         initialPlanets.forEach(planet => {
-          const distance = ship.position.distanceTo(new THREE.Vector3(...planet.position));
+          const body = planetGroups.get(planet.id);
+          if (!body) return;
+          const distance = ship.position.distanceTo(body.position);
           if (distance < planet.size * 3.25 && distance < closestDistance) {
             closest = planet.id;
             closestDistance = distance;
@@ -633,6 +1046,22 @@ function App() {
         if (closest !== nearPlanetRef.current) {
           nearPlanetRef.current = closest;
           setNearPlanet(closest);
+        }
+
+        if (now - mapTelemetryAt > 700) {
+          mapTelemetryAt = now;
+          setPlanets(old => old.map(planet => {
+            const body = planetGroups.get(planet.id);
+            if (!body) return planet;
+            return {
+              ...planet,
+              position: [
+                body.position.x,
+                body.position.y,
+                body.position.z,
+              ] as [number, number, number],
+            };
+          }));
         }
       }
       if (state.mode === 'surface' && state.activePlanet) {
@@ -689,12 +1118,13 @@ function App() {
       renderer.dispose();
       if (host.contains(renderer.domElement)) host.removeChild(renderer.domElement);
       scene.traverse(object => {
-        if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Points || object instanceof THREE.Line) {
           object.geometry.dispose();
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           materials.forEach(material => material.dispose());
         }
       });
+      planetTextures.forEach(texture => texture.dispose());
       sceneRef.current = null;
     };
   }, []);
@@ -835,7 +1265,10 @@ function App() {
     const state = sceneRef.current;
     const planet = planets.find(item => item.id === nearPlanet);
     if (!state || !planet || state.mode !== 'space') return;
-    const surfaceY = planet.position[1] + planet.size;
+    const body = state.planets.get(planet.id);
+    if (!body) return;
+    const livePosition = body.position.clone();
+    const surfaceY = livePosition.y + planet.size;
     state.autopilotTarget = null;
     state.mode = 'landing';
     state.activePlanet = planet.id;
@@ -843,14 +1276,18 @@ function App() {
     state.surfaceGroundY = surfaceY;
     state.keys.clear();
     state.surfaces.forEach(surface => { surface.visible = false; });
-    state.surfaces.get(planet.id)!.visible = true;
+    const landingSurface = state.surfaces.get(planet.id)!;
+    landingSurface.position.set(livePosition.x, surfaceY, livePosition.z);
+    landingSurface.visible = true;
     state.planets.forEach(group => { group.visible = false; });
+    const orbitPaths = state.scene.getObjectByName('planetary-orbit-paths');
+    if (orbitPaths) orbitPaths.visible = false;
     state.stars.visible = false;
     state.surfaceSky.visible = true;
     state.surfaceSky.position.copy(state.ship.position);
     state.scene.background = new THREE.Color('#92c5e7');
     state.scene.fog = new THREE.Fog('#a9d4e9', 180, 760);
-    state.ship.position.set(planet.position[0], surfaceY + 150, planet.position[2] + 35);
+    state.ship.position.set(livePosition.x, surfaceY + 150, livePosition.z + 35);
     state.ship.rotation.set(-0.16, 0, 0, 'YXZ');
     state.yaw = 0; state.pitch = -0.16; state.roll = 0;
     setActivePlanet(planet);
@@ -864,16 +1301,25 @@ function App() {
     const state = sceneRef.current;
     const planet = planets.find(item => item.id === state?.activePlanet);
     if (!state || !planet) return;
+    const body = state.planets.get(planet.id);
+    if (!body) return;
+    const livePosition = body.position.clone();
     state.mode = 'space';
     state.autopilotTarget = null;
     state.activePlanet = null;
     state.surfaces.forEach(surface => { surface.visible = false; });
     state.planets.forEach(group => { group.visible = true; });
+    const orbitPaths = state.scene.getObjectByName('planetary-orbit-paths');
+    if (orbitPaths) orbitPaths.visible = true;
     state.stars.visible = true;
     state.surfaceSky.visible = false;
     state.scene.background = state.originalBackground.clone();
     state.scene.fog = state.originalFog;
-    state.ship.position.set(planet.position[0] + planet.size * 4, planet.position[1] + planet.size + 75, planet.position[2] + planet.size * 4);
+    state.ship.position.set(
+      livePosition.x + planet.size * 4,
+      livePosition.y + planet.size + 75,
+      livePosition.z + planet.size * 4
+    );
     state.ship.rotation.set(Math.PI / 2, 0, 0);
     state.yaw = 0; state.pitch = Math.PI / 2; state.roll = 0;
     state.keys.clear();
@@ -1040,13 +1486,14 @@ function App() {
           <div className="map-title"><span><Radar size={15} /> LIVE NAVIGATION · SOLAR SYSTEM</span><button onClick={() => setShowMap(false)}>×</button></div>
           <div className="map-visual live-map">
             <div className="map-axis map-axis-x" /><div className="map-axis map-axis-z" />
+            <div className="map-sun" title="THE SUN" />
             {planets.map(planet => (
-              <div key={planet.id} className={`map-body ${target === planet.id ? 'map-body-target' : ''}`} style={{ left: `${Math.max(5, Math.min(95, 50 + planet.position[0] / 500 * 45))}%`, top: `${Math.max(7, Math.min(93, 8 + -planet.position[2] / 8500 * 84))}%`, '--planet-color': planet.color } as React.CSSProperties} title={`${planet.name} · X ${planet.position[0]} · Y ${planet.position[1]} · Z ${planet.position[2]}`}>
+              <div key={planet.id} className={`map-body ${target === planet.id ? 'map-body-target' : ''}`} style={{ left: `${Math.max(5, Math.min(95, 50 + planet.position[0] / 4000 * 45))}%`, top: `${Math.max(5, Math.min(95, 50 + (planet.position[2] + 6500) / 4000 * 45))}%`, '--planet-color': planet.color } as React.CSSProperties} title={`${planet.name} · X ${planet.position[0].toFixed(1)} · Y ${planet.position[1].toFixed(1)} · Z ${planet.position[2].toFixed(1)}`}>
                 <span />
                 <small>{planet.name}</small>
               </div>
             ))}
-            <div className="map-ship" style={{ left: `${Math.max(3, Math.min(97, 50 + coordinates[0] / 500 * 45))}%`, top: `${Math.max(5, Math.min(95, 8 + -coordinates[2] / 8500 * 84))}%` }}><span /> <small>YOU</small></div>
+            <div className="map-ship" style={{ left: `${Math.max(3, Math.min(97, 50 + coordinates[0] / 4000 * 45))}%`, top: `${Math.max(5, Math.min(95, 50 + (coordinates[2] + 6500) / 4000 * 45))}%` }}><span /> <small>YOU</small></div>
           </div>
           <div className="map-coordinates"><span>SHIP POSITION</span><b>X {coordinates[0].toFixed(1)} <i /> Y {coordinates[1].toFixed(1)} <i /> Z {coordinates[2].toFixed(1)}</b></div>
           <p>Live ship position and planetary locations · Coordinates update as you fly. Select any planet in the list to set your target.</p>
