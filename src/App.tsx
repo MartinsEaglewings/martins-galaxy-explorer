@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { api, ws } from './appdeploy-client';
+import { VoiceChat, type VoiceMode, type VoicePeer } from './voice-chat';
 import {
-  Activity, ChevronDown, Crosshair, Eye, EyeOff, Gauge, Globe2, Mountain, Radar,
+  Activity, ChevronDown, Crosshair, Eye, EyeOff, Gauge, Globe2, Mic, MicOff, Mountain, Radar,
   Rocket, Satellite, Scan, Shield, Sparkles, Target, Users, Zap,
 } from 'lucide-react';
 
@@ -622,6 +623,17 @@ function App() {
   const [gameStarted, setGameStarted] = useState(false);
   const [usernameError, setUsernameError] = useState('');
   const pilotIdRef = useRef(`pilot-${Math.random().toString(36).slice(2, 12)}`);
+  const voiceRef = useRef<VoiceChat | null>(null);
+  const voiceSendRef = useRef<((message: unknown) => boolean) | null>(null);
+  const voiceConnectionIdRef = useRef('');
+  const [voiceStatus, setVoiceStatus] = useState('VOICE OFF');
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voiceMuted, setVoiceMuted] = useState(false);
+  const [voiceStarting, setVoiceStarting] = useState(false);
+  const [multiplayerReady, setMultiplayerReady] = useState(false);
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>('nearby');
+  const [voicePeers, setVoicePeers] = useState<VoicePeer[]>([]);
+  const [speakingPeerIds, setSpeakingPeerIds] = useState<string[]>([]);
   const scannedCount = planets.filter(p => p.scanned).length;
   const currentTarget = planets.find(p => p.id === target) ?? planets[0];
 
@@ -1472,7 +1484,16 @@ function App() {
 
   useEffect(() => {
     if (!gameStarted) return;
-    const connection = ws.connect();
+    const connection = ws.connect(pilotIdRef.current, pilotName);
+    const voice = new VoiceChat({
+      onStatus: setVoiceStatus,
+      onPeers: setVoicePeers,
+      onSpeaking: setSpeakingPeerIds,
+    });
+    voiceRef.current = voice;
+    voiceSendRef.current = connection.send;
+    voiceConnectionIdRef.current = connection.connectionId;
+    voice.setMode(voiceMode);
     let heartbeat = 0;
     let alive = true;
     setOnlinePilotList([{ id: pilotIdRef.current, name: pilotName || 'Your pilot' }]);
@@ -1554,24 +1575,55 @@ function App() {
     };
 
     connection.onMessage((message: any) => {
+      if (typeof message?.type === 'string' && message.type.startsWith('voice.')) {
+        voice.handleMessage(message);
+        return;
+      }
       if (message?.type !== 'entity.update' || message.payload?.entity_type !== 'galaxy') return;
       const player = message.payload.data;
       if (player && typeof player.id === 'string') applyPlayer(player);
     });
-    connection.onClose(() => setMultiplayerStatus('RECONNECTING'));
-    connection.onError(() => setMultiplayerStatus('OFFLINE'));
+    connection.onClose(() => {
+      setMultiplayerReady(false);
+      voice.stop(false);
+      setVoiceActive(false);
+      setVoiceMuted(false);
+      setVoiceStatus('VOICE DISCONNECTED');
+      setMultiplayerStatus('RECONNECTING');
+    });
+    connection.onError(() => {
+      setMultiplayerReady(false);
+      voice.stop(false);
+      setVoiceActive(false);
+      setVoiceMuted(false);
+      setMultiplayerStatus('OFFLINE');
+    });
     connection.ready.then(async () => {
       if (!alive || !connection.connectionId) return;
+      setMultiplayerReady(true);
       await api.post('/api/subscriptions', { entity_type: 'galaxy', entity_id: 'main', connection_id: connection.connectionId });
       const response = await api.get('/api/players');
       (response.data?.players || []).forEach((player: any) => applyPlayer(player));
       setMultiplayerStatus('LIVE');
-    }).catch(() => setMultiplayerStatus('OFFLINE'));
+    }).catch(() => {
+      setMultiplayerReady(false);
+      setMultiplayerStatus('OFFLINE');
+    });
 
     let heartbeatInFlight = false;
     heartbeat = window.setInterval(() => {
       const state = sceneRef.current;
       if (!alive || !state || !connection.connectionId || heartbeatInFlight) return;
+
+      const remotePositions: Record<string, [number, number, number]> = {};
+      state.remoteShips.forEach((ship, id) => {
+        remotePositions[id] = [ship.position.x, ship.position.y, ship.position.z];
+      });
+      voice.setPositions(
+        [state.ship.position.x, state.ship.position.y, state.ship.position.z],
+        remotePositions
+      );
+
       heartbeatInFlight = true;
       api.post('/api/players', {
         id: pilotIdRef.current,
@@ -1588,7 +1640,14 @@ function App() {
 
     return () => {
       alive = false;
+      setMultiplayerReady(false);
       window.clearInterval(heartbeat);
+      voice.stop();
+      if (voiceRef.current === voice) voiceRef.current = null;
+      voiceSendRef.current = null;
+      voiceConnectionIdRef.current = '';
+      setVoiceActive(false);
+      setVoiceMuted(false);
       if (connection.connectionId) {
         api.post('/api/subscriptions/remove', { entity_type: 'galaxy', entity_id: 'main', connection_id: connection.connectionId }).catch(() => undefined);
         api.delete(`/api/players/${pilotIdRef.current}`).catch(() => undefined);
@@ -1596,6 +1655,36 @@ function App() {
       connection.disconnect();
     };
   }, [gameStarted, pilotName]);
+
+  const toggleVoice = async () => {
+    const voice = voiceRef.current;
+    const send = voiceSendRef.current;
+    const connectionId = voiceConnectionIdRef.current;
+
+    if (!multiplayerReady || !voice || !send || !connectionId) {
+      setVoiceStatus('MULTIPLAYER NOT READY');
+      return;
+    }
+
+    if (voiceActive) {
+      voice.stop();
+      setVoiceActive(false);
+      setVoiceMuted(false);
+      return;
+    }
+
+    setVoiceStarting(true);
+    voice.setMode(voiceMode);
+    const started = await voice.start(send, connectionId);
+    setVoiceActive(started);
+    setVoiceMuted(false);
+    setVoiceStarting(false);
+  };
+
+  const changeVoiceMode = (mode: VoiceMode) => {
+    setVoiceMode(mode);
+    voiceRef.current?.setMode(mode);
+  };
 
   const setKey = useCallback((key: string, down: boolean) => {
     const keys = sceneRef.current?.keys;
@@ -1882,7 +1971,48 @@ function App() {
           <p>Live ship position and planetary locations · Coordinates update as you fly. Select any planet in the list to set your target.</p>
         </div>}
         {hudVisible && <div className="crosshair"><span /><i /></div>}
-        {hudVisible && <div className="sound-toggle"><button onClick={() => setMessage('AUDIO SYSTEM NOT YET INSTALLED')} title="Sound setting">AUDIO OFF</button></div>}
+        {hudVisible && <div className="voice-panel">
+          <div className="voice-panel-heading">
+            <strong>LIVE VOICE LINK</strong>
+            <span className={voiceActive ? 'voice-live-dot active' : 'voice-live-dot'} />
+          </div>
+          <div className="voice-status">{voiceStatus}</div>
+          <div className="voice-actions">
+            <button
+              className={voiceActive ? 'voice-main-button active' : 'voice-main-button'}
+              onClick={() => { void toggleVoice(); }}
+              disabled={voiceStarting || !gameStarted || !multiplayerReady}
+              title="Enable or disable live voice"
+            >
+              {voiceStarting ? 'CONNECTING…' : voiceActive ? 'VOICE ON' : 'ENABLE MIC'}
+            </button>
+            {voiceActive && <button
+              className="voice-mute-button"
+              onClick={() => {
+                const nextMuted = !voiceMuted;
+                voiceRef.current?.setMuted(nextMuted);
+                setVoiceMuted(nextMuted);
+              }}
+              title={voiceMuted ? 'Unmute microphone' : 'Mute microphone'}
+            >
+              {voiceMuted ? <MicOff size={14} /> : <Mic size={14} />}
+              {voiceMuted ? 'MUTED' : 'MUTE'}
+            </button>}
+          </div>
+          {voiceActive && <div className="voice-mode-buttons">
+            <button className={voiceMode === 'nearby' ? 'selected' : ''} onClick={() => changeVoiceMode('nearby')}>NEARBY</button>
+            <button className={voiceMode === 'global' ? 'selected' : ''} onClick={() => changeVoiceMode('global')}>GLOBAL</button>
+          </div>}
+          {voiceActive && <div className="voice-peer-list">
+            {voicePeers.length === 0
+              ? <span>WAITING FOR OTHER PILOTS…</span>
+              : voicePeers.map(peer => <div className="voice-peer" key={peer.id}>
+                  <span className={speakingPeerIds.includes(peer.id) ? 'voice-speaking-dot speaking' : 'voice-speaking-dot'} />
+                  <span>{peer.name || 'PILOT'}</span>
+                  {speakingPeerIds.includes(peer.id) && <small>SPEAKING</small>}
+                </div>)}
+          </div>}
+        </div>}
       {flightMode === 'landing' && <div className="landing-overlay"><div className="landing-label">ATMOSPHERIC ENTRY</div><div className="landing-title">DESCENDING TO SURFACE</div><div className="landing-track"><span /></div><p>Stabilising flight systems · Preparing terrain</p></div>}
     </main>
   );

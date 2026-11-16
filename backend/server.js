@@ -106,29 +106,180 @@ app.post('/api/subscriptions/remove', (req, res) => {
   res.json({ ok: true });
 });
 
+const voiceMembers = new Map();
+
+function notifyVoiceMembers(message, excludeId) {
+  const encoded = JSON.stringify(message);
+
+  for (const [id] of voiceMembers) {
+    if (id === excludeId) continue;
+
+    const socket = connections.get(id);
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(encoded);
+    }
+  }
+}
+
 wss.on('connection', socket => {
   let connectionId = null;
+  let pilotId = '';
+  let pilotName = 'PILOT';
 
   socket.on('message', raw => {
+    if (raw.length > 16384) return;
+
     try {
       const message = JSON.parse(raw.toString());
 
       if (message.type === 'hello' && message.connection_id) {
-        connectionId = String(message.connection_id);
+        const nextId = String(message.connection_id)
+          .replace(/[^a-zA-Z0-9_-]/g, '')
+          .slice(0, 64);
+
+        if (!nextId) return;
+
+        const previous = connections.get(nextId);
+        if (previous && previous !== socket) {
+          voiceMembers.delete(nextId);
+          previous.close();
+          notifyVoiceMembers({
+            type: 'voice.peer-left',
+            peer_id: nextId,
+          }, nextId);
+        }
+
+        connectionId = nextId;
+        pilotId = String(message.pilot_id || '')
+          .replace(/[^a-zA-Z0-9_-]/g, '')
+          .slice(0, 64);
+        pilotName = String(message.pilot_name || 'PILOT')
+          .replace(/[<>\u0000-\u001f]/g, '')
+          .trim()
+          .slice(0, 18) || 'PILOT';
+
         connections.set(connectionId, socket);
+        return;
       }
+
+      if (
+        !connectionId ||
+        connections.get(connectionId) !== socket
+      ) return;
+
+      if (message.type === 'voice.join') {
+        const peers = [...voiceMembers.entries()]
+          .filter(([id]) => (
+            id !== connectionId &&
+            connections.get(id)?.readyState === WebSocket.OPEN
+          ))
+          .map(([id, member]) => ({ id, ...member }));
+
+        const member = {
+          pilot_id: pilotId,
+          name: pilotName,
+        };
+        voiceMembers.set(connectionId, member);
+
+        socket.send(JSON.stringify({
+          type: 'voice.peers',
+          peers,
+        }));
+
+        notifyVoiceMembers({
+          type: 'voice.peer-joined',
+          peer: { id: connectionId, ...member },
+        }, connectionId);
+
+        return;
+      }
+
+      if (message.type === 'voice.leave') {
+        if (voiceMembers.delete(connectionId)) {
+          notifyVoiceMembers({
+            type: 'voice.peer-left',
+            peer_id: connectionId,
+          }, connectionId);
+        }
+        return;
+      }
+
+      if (
+        message.type !== 'voice.signal' ||
+        !voiceMembers.has(connectionId)
+      ) return;
+
+      const targetId = String(message.target || '');
+      if (
+        !/^[a-zA-Z0-9_-]{1,64}$/.test(targetId) ||
+        targetId === connectionId ||
+        !voiceMembers.has(targetId)
+      ) return;
+
+      const recipient = connections.get(targetId);
+      if (!recipient || recipient.readyState !== WebSocket.OPEN) return;
+
+      const incoming = message.signal;
+      if (!incoming || typeof incoming !== 'object') return;
+
+      let signal;
+
+      if (
+        (incoming.type === 'offer' || incoming.type === 'answer') &&
+        typeof incoming.sdp === 'string' &&
+        incoming.sdp.length > 0 &&
+        incoming.sdp.length <= 12000
+      ) {
+        signal = { type: incoming.type, sdp: incoming.sdp };
+      } else if (
+        incoming.type === 'candidate' &&
+        incoming.candidate &&
+        typeof incoming.candidate.candidate === 'string' &&
+        incoming.candidate.candidate.length <= 4096
+      ) {
+        const candidate = incoming.candidate;
+        signal = {
+          type: 'candidate',
+          candidate: {
+            candidate: candidate.candidate,
+            sdpMid: typeof candidate.sdpMid === 'string'
+              ? candidate.sdpMid.slice(0, 128) : null,
+            sdpMLineIndex: Number.isInteger(candidate.sdpMLineIndex)
+              ? candidate.sdpMLineIndex : null,
+            ...(typeof candidate.usernameFragment === 'string'
+              ? { usernameFragment: candidate.usernameFragment.slice(0, 256) }
+              : {}),
+          },
+        };
+      } else if (incoming.type === 'hangup') {
+        signal = { type: 'hangup' };
+      } else {
+        return;
+      }
+
+      recipient.send(JSON.stringify({
+        type: 'voice.signal',
+        from: connectionId,
+        signal,
+      }));
     } catch {
-      // Ignore malformed messages.
+      // Ignore malformed or invalid signalling messages.
     }
   });
 
   socket.on('close', () => {
     if (connectionId && connections.get(connectionId) === socket) {
       connections.delete(connectionId);
+
+      if (voiceMembers.delete(connectionId)) {
+        notifyVoiceMembers({
+          type: 'voice.peer-left',
+          peer_id: connectionId,
+        }, connectionId);
+      }
     }
   });
 });
-
 app.use(express.static(dist));
 
 app.get(/.*/, (req, res) => {

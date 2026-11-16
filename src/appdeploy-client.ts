@@ -29,7 +29,7 @@ const api = {
 };
 
 const ws = {
-  connect() {
+  connect(pilotId?: string, pilotName?: string) {
     const connectionId =
       'pilot-' + Date.now().toString(36) + '-' +
       Math.random().toString(36).slice(2, 10);
@@ -46,6 +46,8 @@ const ws = {
         socket.send(JSON.stringify({
           type: 'hello',
           connection_id: connectionId,
+          pilot_id: pilotId || '',
+          pilot_name: pilotName || '',
         }));
         resolve();
       }, { once: true });
@@ -78,6 +80,11 @@ const ws = {
       },
       onError(callback: () => void) {
         errorHandler = callback;
+      },
+      send(message: unknown) {
+        if (socket.readyState !== WebSocket.OPEN) return false;
+        socket.send(JSON.stringify(message));
+        return true;
       },
       disconnect() {
         socket.close();

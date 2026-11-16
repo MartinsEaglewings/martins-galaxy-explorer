@@ -706,3 +706,119 @@ button { font: inherit; color: inherit; cursor: pointer; }
   }
   .online-pilots-toggle { min-height: 39px; }
 }
+
+
+/* Live multiplayer voice controls */
+.voice-panel {
+  position: absolute;
+  z-index: 9;
+  right: 30px;
+  bottom: 119px;
+  width: 244px;
+  padding: 12px;
+  border: 1px solid rgba(104, 207, 255, .28);
+  border-radius: 9px;
+  background: linear-gradient(145deg, rgba(5, 22, 42, .94), rgba(3, 10, 25, .94));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .28), inset 0 1px rgba(255,255,255,.04);
+  backdrop-filter: blur(12px);
+}
+.voice-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #d9f5ff;
+  font: 9px 'DM Mono', monospace;
+  letter-spacing: 1.1px;
+}
+.voice-live-dot, .voice-speaking-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #687b8d;
+}
+.voice-live-dot.active, .voice-speaking-dot.speaking {
+  background: #5de0a4;
+  box-shadow: 0 0 9px rgba(93, 224, 164, .85);
+}
+.voice-status {
+  margin-top: 6px;
+  color: #83a6bf;
+  font: 8px 'DM Mono', monospace;
+  letter-spacing: .45px;
+}
+.voice-actions, .voice-mode-buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}
+.voice-actions button, .voice-mode-buttons button {
+  min-height: 30px;
+  border: 1px solid rgba(113, 190, 229, .25);
+  border-radius: 5px;
+  background: rgba(15, 43, 67, .72);
+  color: #b8d9eb;
+  font: 8px 'DM Mono', monospace;
+  letter-spacing: .6px;
+}
+.voice-main-button {
+  flex: 1;
+}
+.voice-main-button.active, .voice-mode-buttons button.selected {
+  border-color: rgba(93, 224, 164, .55);
+  background: rgba(22, 105, 83, .32);
+  color: #9af0c5;
+}
+.voice-actions button:disabled {
+  opacity: .55;
+}
+.voice-mute-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+}
+.voice-mode-buttons button {
+  flex: 1;
+  min-height: 26px;
+  font-size: 7px;
+}
+.voice-peer-list {
+  display: grid;
+  gap: 6px;
+  max-height: 90px;
+  overflow-y: auto;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(140, 190, 220, .12);
+  color: #a9c6da;
+  font: 8px 'DM Mono', monospace;
+}
+.voice-peer-list > span {
+  color: #718da4;
+  font-size: 7px;
+}
+.voice-peer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.voice-peer > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-peer small {
+  margin-left: auto;
+  color: #78e9b5;
+  font-size: 7px;
+}
+@media(max-width:760px) {
+  .voice-panel {
+    right: 12px;
+    bottom: 306px;
+    width: min(244px, calc(100vw - 24px));
+  }
+}
