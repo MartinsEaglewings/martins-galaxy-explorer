@@ -817,7 +817,7 @@ function App() {
 
     const sunMesh = new THREE.Mesh(
       new THREE.SphereGeometry(88, 48, 36),
-      new THREE.MeshBasicMaterial({ color: 0xffe5a0 })
+      new THREE.MeshBasicMaterial({ map: sunTexture })
     );
     sunMesh.name = 'sun-surface';
     sunGroup.add(sunMesh);
@@ -878,11 +878,11 @@ function App() {
       const bump = loadPlanetTexture(textures.bump);
 
       const bodyMaterial = new THREE.MeshStandardMaterial({
-        color: planet.color,
-        roughness: 0.82,
-        metalness: 0.05,
-        emissive: planet.color,
-        emissiveIntensity: 0.16,
+        map: albedo,
+        bumpMap: bump,
+        bumpScale: planet.id === 'verdant' ? 0.7 : 1.05,
+        roughness: 0.92,
+        metalness: 0.0,
       });
 
       const globe = new THREE.Mesh(
@@ -952,7 +952,9 @@ function App() {
         const moon = new THREE.Mesh(
           new THREE.SphereGeometry(6.2, 40, 32),
           new THREE.MeshStandardMaterial({
-            color: 0xb9c5d8,
+            map: moonAlbedo,
+            bumpMap: moonBump,
+            bumpScale: 0.75,
             roughness: 1,
           })
         );
