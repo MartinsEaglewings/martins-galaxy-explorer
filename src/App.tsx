@@ -748,6 +748,8 @@ function App() {
     const terrainLoading = new Set<string>();
     const terrainLoaded = new Set<string>();
     let sceneAlive = true;
+    let voxelWaterMesh: THREE.Mesh | null = null;
+    let voxelWaterBaseY = 0;
 
     const planetTextureFiles: Record<string, { albedo: string; bump: string }> = {
       aurelia: {
@@ -1202,6 +1204,56 @@ function App() {
           }
 
           console.log(`Detailed GLB terrain installed: ${planetId}`);
+
+          // Load the voxel landscape as a separate Earth island.
+          // It must not enter the height-grid terrain sampler.
+          if (planetId === 'verdant') {
+            gltfLoader.load(
+              '/assets/earth-voxel-terrain.glb',
+              (voxelGltf) => {
+                if (!sceneAlive || state.surfaces.get('verdant') !== rebuilt.group) return;
+
+                const islandX = 270;
+                const islandZ = 0;
+                const islandGround = sampleTerrain(islandX, islandZ);
+                const island = voxelGltf.scene;
+
+                island.name = 'earth-voxel-island';
+                island.position.set(islandX, islandGround + 0.5, islandZ);
+
+                let waterFound = false;
+                island.traverse((object) => {
+                  if (object instanceof THREE.Mesh) {
+                    object.castShadow = true;
+                    object.receiveShadow = true;
+
+                    if (!waterFound && object.name.toLowerCase().includes('water')) {
+                      voxelWaterMesh = object;
+                      voxelWaterBaseY = object.position.y;
+                      waterFound = true;
+                    }
+                  }
+                });
+
+                rebuilt.group.add(island);
+
+                // Keep low-flying ships from passing through the island.
+                rebuilt.obstacles.push({
+                  x: islandX,
+                  z: islandZ,
+                  radius: 39,
+                  topY: islandGround + 13,
+                });
+                state.surfaceObstacles.set('verdant', rebuilt.obstacles);
+
+                console.log(
+                  `Earth voxel island installed at (${islandX}, ${islandZ}); water animation: ${waterFound ? 'ready' : 'mesh not found'}`
+                );
+              },
+              undefined,
+              (error) => console.warn('Could not load Earth voxel island.', error)
+            );
+          }
         },
         undefined,
         (error) => {
@@ -1242,6 +1294,11 @@ function App() {
       frame = requestAnimationFrame(animate);
       const dt = Math.min((now - last) / 1000, 0.04);
       last = now;
+
+      if (voxelWaterMesh) {
+        voxelWaterMesh.position.y =
+          voxelWaterBaseY + Math.sin(now * 0.0014) * 0.035;
+      }
 
       if (state.mode === 'landing') {
         state.landingProgress = Math.min(1, state.landingProgress + dt / 3.4);
@@ -1464,6 +1521,7 @@ function App() {
 
     return () => {
       sceneAlive = false;
+      voxelWaterMesh = null;
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', keyDown);
