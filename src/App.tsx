@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { api, ws } from './appdeploy-client';
 import {
-  Activity, Crosshair, Eye, EyeOff, Gauge, Globe2, Mountain, Radar,
-  Rocket, Satellite, Scan, Shield, Sparkles, Target, Zap,
+  Activity, ChevronDown, Crosshair, Eye, EyeOff, Gauge, Globe2, Mountain, Radar,
+  Rocket, Satellite, Scan, Shield, Sparkles, Target, Users, Zap,
 } from 'lucide-react';
 
 type Planet = {
@@ -614,6 +614,8 @@ function App() {
   const [nearPlanet, setNearPlanet] = useState<string | null>(null);
   const [activePlanet, setActivePlanet] = useState<Planet | null>(null);
   const [onlinePlayers, setOnlinePlayers] = useState(1);
+  const [onlinePilotList, setOnlinePilotList] = useState<Array<{ id: string; name: string }>>([]);
+  const [showOnlinePilots, setShowOnlinePilots] = useState(false);
   const [multiplayerStatus, setMultiplayerStatus] = useState('CONNECTING');
   const [pilotName, setPilotName] = useState(() => localStorage.getItem('galaxy-explorer-username') || '');
   const [usernameDraft, setUsernameDraft] = useState(() => localStorage.getItem('galaxy-explorer-username') || '');
@@ -1473,8 +1475,17 @@ function App() {
     const connection = ws.connect();
     let heartbeat = 0;
     let alive = true;
+    setOnlinePilotList([{ id: pilotIdRef.current, name: pilotName || 'Your pilot' }]);
     const applyPlayer = (player: { id: string; name?: string; x: number; y: number; z: number; yaw?: number; pitch?: number; removed?: boolean }) => {
       if (!alive || player.id === pilotIdRef.current) return;
+
+      setOnlinePilotList(current => {
+        if (player.removed) return current.filter(entry => entry.id !== player.id);
+        const next = current.filter(entry => entry.id !== player.id);
+        next.push({ id: player.id, name: String(player.name || 'PILOT').slice(0, 18) });
+        return next.sort((a, b) => a.name.localeCompare(b.name));
+      });
+
       const state = sceneRef.current;
       if (!state) return;
       if (player.removed) {
@@ -1738,9 +1749,41 @@ function App() {
       <button className="hud-toggle" onClick={() => setHudVisible(value => !value)} aria-label={hudVisible ? 'Hide HUD' : 'Show HUD'}>
         {hudVisible ? <><EyeOff size={15} /> HIDE HUD</> : <><Eye size={16} /> SHOW HUD</>}
       </button>
-      <div className="glass" style={{ position: 'absolute', zIndex: 8, top: 84, right: 18, padding: '9px 13px', minWidth: 142, pointerEvents: 'none' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, font: '10px monospace', letterSpacing: 1, color: multiplayerStatus === 'LIVE' ? '#70edb0' : '#e9bd75' }}><span className="live-dot" /> MULTIPLAYER {multiplayerStatus}</div>
-        <div style={{ marginTop: 5, font: '11px monospace', color: '#dcecff' }}>{onlinePlayers} PILOT{onlinePlayers === 1 ? '' : 'S'} · {pilotName}</div>
+      <div className="online-pilots-widget">
+        <button className="online-pilots-toggle"
+          onClick={() => setShowOnlinePilots(value => !value)}
+          aria-expanded={showOnlinePilots}
+          aria-label={showOnlinePilots ? 'Hide online pilots' : 'Show online pilots'}>
+          <Users size={16} />
+          <span>ONLINE PILOTS</span>
+          <strong>{onlinePilotList.length || onlinePlayers}</strong>
+          <ChevronDown size={15} className={showOnlinePilots ? 'online-pilots-chevron open' : 'online-pilots-chevron'} />
+        </button>
+
+        {showOnlinePilots && <section className="online-pilots-panel glass">
+          <div className="online-pilots-heading">
+            <div>
+              <strong>GALAXY NETWORK</strong>
+              <small>
+                <span className={multiplayerStatus === 'LIVE' ? 'online-status-dot' : 'online-status-dot offline'} />
+                {multiplayerStatus}
+              </small>
+            </div>
+            <span className="online-pilots-total">{onlinePilotList.length || onlinePlayers} ONLINE</span>
+          </div>
+          <div className="online-pilots-list">
+            {(onlinePilotList.length ? onlinePilotList : [
+              { id: pilotIdRef.current, name: pilotName || 'Your pilot' }
+            ]).map(player => (
+              <div className="online-pilot-row" key={player.id}>
+                <span className="online-status-dot" />
+                <span className="online-pilot-name">{player.name}</span>
+                {player.id === pilotIdRef.current && <span className="online-pilot-you">YOU</span>}
+              </div>
+            ))}
+          </div>
+          <div className="online-pilots-footer">LIVE MULTIPLAYER ROSTER</div>
+        </section>}
       </div>
 
       {hudVisible && <>
