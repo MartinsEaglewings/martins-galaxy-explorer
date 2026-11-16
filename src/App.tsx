@@ -1492,10 +1492,11 @@ function App() {
     });
     voiceRef.current = voice;
     voiceSendRef.current = connection.send;
-    voiceConnectionIdRef.current = connection.connectionId;
+    voiceConnectionIdRef.current = '';
     voice.setMode(voiceMode);
     let heartbeat = 0;
     let alive = true;
+    let readySequence = 0;
     setOnlinePilotList([{ id: pilotIdRef.current, name: pilotName || 'Your pilot' }]);
     const applyPlayer = (player: { id: string; name?: string; x: number; y: number; z: number; yaw?: number; pitch?: number; removed?: boolean }) => {
       if (!alive || player.id === pilotIdRef.current) return;
@@ -1584,36 +1585,65 @@ function App() {
       if (player && typeof player.id === 'string') applyPlayer(player);
     });
     connection.onClose(() => {
+      readySequence += 1;
       setMultiplayerReady(false);
-      voice.stop(false);
-      setVoiceActive(false);
-      setVoiceMuted(false);
-      setVoiceStatus('VOICE DISCONNECTED');
+      voiceConnectionIdRef.current = '';
+      voice.handleTransportLost();
+      setVoiceStatus('VOICE RECONNECTING');
       setMultiplayerStatus('RECONNECTING');
     });
+
     connection.onError(() => {
       setMultiplayerReady(false);
-      voice.stop(false);
-      setVoiceActive(false);
-      setVoiceMuted(false);
-      setMultiplayerStatus('OFFLINE');
+      voiceConnectionIdRef.current = '';
+      voice.handleTransportLost();
+      setMultiplayerStatus('RECONNECTING');
     });
-    connection.ready.then(async () => {
-      if (!alive || !connection.connectionId) return;
+
+    connection.onReady(async (connectionId: string) => {
+      const sequence = ++readySequence;
+      voiceSendRef.current = connection.send;
+      voiceConnectionIdRef.current = connectionId;
       setMultiplayerReady(true);
-      await api.post('/api/subscriptions', { entity_type: 'galaxy', entity_id: 'main', connection_id: connection.connectionId });
-      const response = await api.get('/api/players');
-      (response.data?.players || []).forEach((player: any) => applyPlayer(player));
-      setMultiplayerStatus('LIVE');
-    }).catch(() => {
-      setMultiplayerReady(false);
-      setMultiplayerStatus('OFFLINE');
+
+      try {
+        await api.post('/api/subscriptions', {
+          entity_type: 'galaxy',
+          entity_id: 'main',
+          connection_id: connectionId,
+        });
+
+        const response = await api.get('/api/players');
+
+        // Ignore responses belonging to an older WebSocket connection.
+        if (!alive || sequence !== readySequence || connection.connectionId !== connectionId) return;
+
+        const uniquePlayers = new Map<string, any>();
+
+        (response.data?.players || []).forEach((player: any) => {
+          if (player && typeof player.id === 'string') {
+            uniquePlayers.set(player.id, player);
+          }
+        });
+
+        uniquePlayers.forEach(player => applyPlayer(player));
+
+        if (!alive || sequence !== readySequence || connection.connectionId !== connectionId) return;
+
+        voice.reconnect(connection.send, connectionId);
+        setMultiplayerStatus('LIVE');
+      } catch {
+        if (alive && sequence === readySequence && connection.connectionId === connectionId) {
+          setMultiplayerReady(false);
+          setMultiplayerStatus('OFFLINE');
+        }
+      }
     });
 
     let heartbeatInFlight = false;
     heartbeat = window.setInterval(() => {
       const state = sceneRef.current;
-      if (!alive || !state || !connection.connectionId || heartbeatInFlight) return;
+      if (!alive || !state || !connection.isConnected || !connection.connectionId || heartbeatInFlight) return;
 
       const remotePositions: Record<string, [number, number, number]> = {};
       state.remoteShips.forEach((ship, id) => {
@@ -1640,6 +1670,7 @@ function App() {
 
     return () => {
       alive = false;
+      readySequence += 1;
       setMultiplayerReady(false);
       window.clearInterval(heartbeat);
       voice.stop();
@@ -1650,7 +1681,9 @@ function App() {
       setVoiceMuted(false);
       if (connection.connectionId) {
         api.post('/api/subscriptions/remove', { entity_type: 'galaxy', entity_id: 'main', connection_id: connection.connectionId }).catch(() => undefined);
-        api.delete(`/api/players/${pilotIdRef.current}`).catch(() => undefined);
+        api.delete(`/api/players/${pilotIdRef.current}`, {
+          connection_id: connection.connectionId,
+        }).catch(() => undefined);
       }
       connection.disconnect();
     };

@@ -15,6 +15,7 @@ app.use(express.json({ limit: '32kb' }));
 
 const players = new Map();
 const connections = new Map();
+const pilotConnections = new Map();
 
 function broadcast(player, excludeConnectionId) {
   const message = JSON.stringify({
@@ -62,8 +63,22 @@ app.post('/api/players', (req, res) => {
 
   const values = [input.x, input.y, input.z, input.yaw, input.pitch];
 
+  const connectionId = String(input.connection_id || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .slice(0, 64);
+
   if (!id || values.some(value => !Number.isFinite(Number(value)))) {
     return res.status(400).json({ error: 'Invalid player telemetry' });
+  }
+
+  const ownerSocket = connections.get(connectionId);
+  if (
+    !connectionId ||
+    pilotConnections.get(id) !== connectionId ||
+    !ownerSocket ||
+    ownerSocket.readyState !== WebSocket.OPEN
+  ) {
+    return res.status(409).json({ error: 'Player connection is no longer active' });
   }
 
   const player = {
@@ -88,12 +103,21 @@ app.delete('/api/players/:id', (req, res) => {
     .replace(/[^a-zA-Z0-9_-]/g, '')
     .slice(0, 64);
 
-  if (!id) {
-    return res.status(400).json({ error: 'Invalid pilot id' });
+  const connectionId = String(req.body?.connection_id || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .slice(0, 64);
+
+  if (!id || !connectionId) {
+    return res.status(400).json({ error: 'Invalid pilot or connection id' });
   }
 
-  players.delete(id);
-  broadcast({ id, removed: true });
+  if (pilotConnections.get(id) !== connectionId) {
+    return res.status(409).json({ error: 'This connection no longer owns the pilot' });
+  }
+
+  if (players.delete(id)) {
+    broadcast({ id, removed: true });
+  }
 
   res.json({ ok: true });
 });
@@ -139,15 +163,7 @@ wss.on('connection', socket => {
 
         if (!nextId) return;
 
-        const previous = connections.get(nextId);
-        if (previous && previous !== socket) {
-          voiceMembers.delete(nextId);
-          previous.close();
-          notifyVoiceMembers({
-            type: 'voice.peer-left',
-            peer_id: nextId,
-          }, nextId);
-        }
+        const previousSameId = connections.get(nextId);
 
         connectionId = nextId;
         pilotId = String(message.pilot_id || '')
@@ -158,7 +174,36 @@ wss.on('connection', socket => {
           .trim()
           .slice(0, 18) || 'PILOT';
 
+        const previousPilotConnectionId = pilotId
+          ? pilotConnections.get(pilotId)
+          : null;
+        const previousPilotSocket = previousPilotConnectionId
+          ? connections.get(previousPilotConnectionId)
+          : null;
+
+        // Register the new owner before closing the old socket.
         connections.set(connectionId, socket);
+        if (pilotId) pilotConnections.set(pilotId, connectionId);
+
+        if (previousSameId && previousSameId !== socket) {
+          if (voiceMembers.delete(nextId)) {
+            notifyVoiceMembers({
+              type: 'voice.peer-left',
+              peer_id: nextId,
+            }, nextId);
+          }
+          previousSameId.close();
+        }
+
+        if (
+          previousPilotConnectionId &&
+          previousPilotConnectionId !== connectionId &&
+          previousPilotSocket &&
+          previousPilotSocket !== socket
+        ) {
+          previousPilotSocket.close();
+        }
+
         return;
       }
 
@@ -276,6 +321,15 @@ wss.on('connection', socket => {
           type: 'voice.peer-left',
           peer_id: connectionId,
         }, connectionId);
+      }
+
+      // A superseded socket must never remove its replacement's player.
+      if (pilotId && pilotConnections.get(pilotId) === connectionId) {
+        pilotConnections.delete(pilotId);
+
+        if (players.delete(pilotId)) {
+          broadcast({ id: pilotId, removed: true });
+        }
       }
     }
   });

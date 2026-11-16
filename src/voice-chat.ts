@@ -112,6 +112,41 @@ export class VoiceChat {
     }
   }
 
+  // Preserve the microphone when the signalling WebSocket is interrupted.
+  handleTransportLost() {
+    if (this.stopped || !this.stream) return;
+
+    for (const id of [...this.peers.keys()]) {
+      this.removePeer(id);
+    }
+
+    this.send = null;
+    this.connectionId = '';
+    this.speakingCallback([]);
+    this.statusCallback('VOICE RECONNECTING');
+  }
+
+  // Rejoin voice using a new WebSocket connection without asking for the mic again.
+  reconnect(
+    send: (message: unknown) => boolean,
+    connectionId: string
+  ): boolean {
+    if (this.stopped || !this.stream || !connectionId) return false;
+
+    this.send = send;
+    this.connectionId = connectionId;
+
+    if (!this.send({ type: 'voice.join' })) {
+      this.statusCallback('VOICE RECONNECTING');
+      return false;
+    }
+
+    this.statusCallback(
+      this.muted ? 'MICROPHONE MUTED' : 'VOICE CONNECTED'
+    );
+    return true;
+  }
+
   handleMessage(message: SignalMessage) {
     if (this.stopped || !this.stream) return;
 
