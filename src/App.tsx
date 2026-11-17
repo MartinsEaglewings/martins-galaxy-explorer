@@ -2021,6 +2021,19 @@ function App() {
         </div>
       </>}
       <div className="persistent-controls">
+          <button
+            className="planetary-descent-button"
+            onClick={descendToPlanet}
+            disabled={!nearPlanet || flightMode !== 'space'}
+            aria-label={nearPlanet ? `Descend to ${planets.find(p => p.id === nearPlanet)?.name || 'nearby planet'}` : 'Approach a planet to descend'}
+          >
+            <Mountain size={16} />
+            {flightMode !== 'space'
+              ? 'PLANETARY DESCENT UNAVAILABLE'
+              : nearPlanet
+                ? `DESCEND TO ${planets.find(p => p.id === nearPlanet)?.name.toUpperCase() || 'PLANET'}`
+                : 'APPROACH A PLANET TO DESCEND'}
+          </button>
           <div className="flight-controls glass">
             <div className="control-hint"><span>FLIGHT CONTROLS</span><small>WASD · ASCEND / DESCEND · SPACE · Q / E</small></div>
             <div className="control-row">

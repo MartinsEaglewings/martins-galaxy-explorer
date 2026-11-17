@@ -822,3 +822,34 @@ button { font: inherit; color: inherit; cursor: pointer; }
     width: min(244px, calc(100vw - 24px));
   }
 }
+
+
+/* Persistent planetary descent action */
+.planetary-descent-button {
+  width: 100%;
+  min-height: 43px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid rgba(255,181,115,.58);
+  border-radius: 8px;
+  background: linear-gradient(105deg,rgba(139,72,29,.96),rgba(205,119,52,.94));
+  color: #fff6e9;
+  font: 10px 'DM Mono',monospace;
+  font-weight: 700;
+  letter-spacing: 1px;
+  box-shadow: 0 0 20px rgba(225,130,57,.17);
+}
+.planetary-descent-button:disabled {
+  border-color: rgba(125,158,181,.24);
+  background: rgba(17,38,57,.88);
+  color: #91a8bd;
+  box-shadow: none;
+  opacity: .88;
+}
+.planetary-descent-button:not(:disabled):active {
+  filter: brightness(1.2);
+  transform: translateY(1px);
+}
