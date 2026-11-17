@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createBlackHoleAnimation } from './black-hole/martins-black-hole-animation';
 import { createCinematicNebula } from './cinematic/nebula-engine';
+import { createDistantGalaxies } from './cinematic/distant-galaxies';
+
 import { api, ws } from './appdeploy-client';
 import { VoiceChat, type VoiceMode, type VoicePeer } from './voice-chat';
 import { GameAudio } from './audio/game-audio';
@@ -683,19 +685,7 @@ function App() {
     scene.add(stars);
 
     const cinematicNebula = createCinematicNebula(scene);
-    const galaxyPositions = new Float32Array(2600 * 3);
-    for (let i = 0; i < 2600; i++) {
-      const arm = i % 4;
-      const radius = 90 + Math.random() * 1050;
-      const angle = radius * 0.0038 + arm * Math.PI / 2 + (Math.random() - 0.5) * 0.42;
-      galaxyPositions[i * 3] = Math.cos(angle) * radius;
-      galaxyPositions[i * 3 + 1] = (Math.random() - 0.5) * (70 + radius * 0.08);
-      galaxyPositions[i * 3 + 2] = -2500 + Math.sin(angle) * radius;
-    }
-    const galaxyGeometry = new THREE.BufferGeometry();
-    galaxyGeometry.setAttribute('position', new THREE.BufferAttribute(galaxyPositions, 3));
-    const galaxy = new THREE.Points(galaxyGeometry, new THREE.PointsMaterial({ color: 0xb6a7ff, size: 2.1, transparent: true, opacity: 0.9 }));
-    scene.add(galaxy);
+    const distantGalaxies = createDistantGalaxies(scene);
 
     const asteroidField = new THREE.Group();
     const asteroids: Array<{ mesh: THREE.Mesh; radius: number }> = [];
@@ -1980,8 +1970,8 @@ function App() {
         sunGlow.rotation.y -= dt * 0.012;
 
         stars.rotation.y += dt * 0.0015;
-        galaxy.rotation.z += dt * 0.000035;
         cinematicNebula.update(now * 0.001);
+        distantGalaxies.update(dt);
 
         saturnRingSystems.forEach(system => {
           system.pivot.rotation.z += dt * 0.008;
@@ -2287,6 +2277,7 @@ function App() {
     return () => {
       sceneAlive = false;
       cinematicNebula.dispose();
+      distantGalaxies.dispose();
       blackHoleAnimation?.dispose();
       blackHoleAnimation = null;
       blackHoleBlastRing.geometry.dispose();
