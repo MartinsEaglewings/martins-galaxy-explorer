@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { createBlackHoleAnimation } from './black-hole/martins-black-hole-animation';
 import { api, ws } from './appdeploy-client';
 import { VoiceChat, type VoiceMode, type VoicePeer } from './voice-chat';
 import {
@@ -850,6 +851,43 @@ function App() {
     sunGroup.add(sunGlow);
     scene.add(sunGroup);
 
+    // Distant black-hole landmark beyond the planetary system.
+    const blackHoleGroup = new THREE.Group();
+    blackHoleGroup.name = 'martins-black-hole';
+    // Elevated landmark visible from the starting flight corridor.
+    blackHoleGroup.position.set(-950, 0, -2750);
+    blackHoleGroup.scale.setScalar(125);
+    scene.add(blackHoleGroup);
+
+    let blackHoleAnimation: ReturnType<typeof createBlackHoleAnimation> | null = null;
+
+    gltfLoader.load(
+      '/assets/martins_black_hole.glb',
+      (gltf) => {
+        if (!sceneAlive) {
+          gltf.scene.traverse(object => {
+            if (
+              object instanceof THREE.Mesh ||
+              object instanceof THREE.Points ||
+              object instanceof THREE.Line
+            ) {
+              object.geometry.dispose();
+              const materials = Array.isArray(object.material)
+                ? object.material
+                : [object.material];
+              materials.forEach(material => material.dispose());
+            }
+          });
+          return;
+        }
+
+        blackHoleGroup.add(gltf.scene);
+        blackHoleAnimation = createBlackHoleAnimation(gltf.scene);
+      },
+      undefined,
+      (error) => console.error('Unable to load black-hole model:', error)
+    );
+
     const sunlight = new THREE.PointLight(0xffd4a0, 1800, 18000, 2);
     sunlight.position.copy(sunPosition);
     scene.add(sunlight);
@@ -1291,6 +1329,127 @@ function App() {
     let solarExplosionStartedAt = 0;
     let solarRespawnAt = 0;
 
+    // Black-hole capture is deliberately independent of solar destruction.
+    let blackHolePhase: 'clear' | 'pulling' | 'disintegrated' = 'clear';
+    let blackHolePullStartedAt = 0;
+    let blackHoleRespawnAt = 0;
+    const blackHoleVelocity = new THREE.Vector3();
+
+    const blackHoleShardGroup = new THREE.Group();
+    blackHoleShardGroup.name = 'black-hole-ship-fragments';
+    blackHoleShardGroup.visible = false;
+
+    const blackHoleShardMaterials = [
+      new THREE.MeshBasicMaterial({ color: 0x21dfff, emissive: 0x087bff }),
+      new THREE.MeshBasicMaterial({ color: 0xb45cff, emissive: 0x6820ff }),
+      new THREE.MeshBasicMaterial({ color: 0xffa34a, emissive: 0xff4b12 }),
+    ];
+
+    const blackHoleShards: THREE.Mesh[] = [];
+    const blackHoleShardGeometry = new THREE.TetrahedronGeometry(0.72, 0);
+
+    for (let i = 0; i < 15; i++) {
+      const shard = new THREE.Mesh(
+        blackHoleShardGeometry,
+        blackHoleShardMaterials[i % blackHoleShardMaterials.length]
+      );
+      shard.visible = false;
+      blackHoleShardGroup.add(shard);
+      blackHoleShards.push(shard);
+    }
+
+    scene.add(blackHoleShardGroup);
+
+    const blackHoleBlastRingMaterial = new THREE.MeshBasicMaterial({
+      color: 0x62eaff,
+      transparent: true,
+      opacity: 1,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const blackHoleBlastRing = new THREE.Mesh(
+      new THREE.TorusGeometry(1, 0.13, 8, 48),
+      blackHoleBlastRingMaterial
+    );
+    blackHoleBlastRing.visible = false;
+    blackHoleShardGroup.add(blackHoleBlastRing);
+
+    const blackHoleFlashMaterial = new THREE.MeshBasicMaterial({
+      color: 0xe8fbff,
+      transparent: true,
+      opacity: 1,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const blackHoleFlash = new THREE.Mesh(
+      new THREE.SphereGeometry(0.8, 16, 12),
+      blackHoleFlashMaterial
+    );
+    blackHoleFlash.visible = false;
+    blackHoleShardGroup.add(blackHoleFlash);
+
+    // Three expanding, coloured shockwaves.
+    const blackHoleShockRings: THREE.Mesh[] = [];
+    const blackHoleShockMaterials: THREE.MeshBasicMaterial[] = [];
+    const shockColours = [0x36eaff, 0xa45cff, 0xff9b42];
+
+    for (let i = 0; i < 3; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: shockColours[i],
+        transparent: true,
+        opacity: 1,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1, 0.11 + i * 0.025, 8, 64),
+        material
+      );
+      ring.visible = false;
+      ring.rotation.x = i * 0.28;
+      ring.rotation.y = i * 0.42;
+      blackHoleShardGroup.add(ring);
+      blackHoleShockRings.push(ring);
+      blackHoleShockMaterials.push(material);
+    }
+
+    // Glowing fragments thrown outward by the impact.
+    const blackHoleDebris: THREE.Mesh[] = [];
+    const blackHoleDebrisGeometry = new THREE.IcosahedronGeometry(0.16, 1);
+    const blackHoleDebrisMaterials = [
+      new THREE.MeshBasicMaterial({
+        color: 0x38eaff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+      new THREE.MeshBasicMaterial({
+        color: 0xc16aff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+      new THREE.MeshBasicMaterial({
+        color: 0xffa044,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    ];
+
+    for (let i = 0; i < 36; i++) {
+      const debris = new THREE.Mesh(
+        blackHoleDebrisGeometry,
+        blackHoleDebrisMaterials[i % blackHoleDebrisMaterials.length]
+      );
+      debris.visible = false;
+      blackHoleShardGroup.add(debris);
+      blackHoleDebris.push(debris);
+    }
+
     const solarFireGroup = new THREE.Group();
     solarFireGroup.name = 'solar-hull-fire';
     solarFireGroup.visible = false;
@@ -1449,7 +1608,8 @@ function App() {
           setMessage('SURFACE LANDING COMPLETE · PLANETARY TERRAIN ACCESSIBLE');
         }
       } else {
-        const controlsEnabled = solarHazardPhase !== 'exploded';
+        const controlsEnabled =
+          solarHazardPhase !== 'exploded' && blackHolePhase !== 'disintegrated';
         const forward = controlsEnabled && (state.keys.has('w') || state.keys.has('arrowup') || Boolean(state.autopilotTarget));
         const reverse = controlsEnabled && (state.keys.has('s') || state.keys.has('arrowdown'));
         const left = controlsEnabled && (state.keys.has('a') || state.keys.has('arrowleft'));
@@ -1492,7 +1652,159 @@ function App() {
         ship.position.addScaledVector(direction, currentSpeed * dt);
         ship.position.y += ((climb ? 1 : 0) - (descend ? 1 : 0)) * (state.mode === 'surface' ? 34 : 48) * dt;
 
-        if (state.mode === 'space' && solarHazardPhase !== 'exploded') {
+        if (
+          state.mode === 'space' &&
+          blackHolePhase !== 'disintegrated'
+        ) {
+          const toBlackHole = blackHoleGroup.position.clone().sub(ship.position);
+          const blackHoleDistance = toBlackHole.length();
+
+          const gravityRadius = 2600;
+          const eventHorizonRadius = 170;
+
+          if (blackHoleDistance < gravityRadius && blackHoleDistance > 0.001) {
+            const pullDirection = toBlackHole.normalize();
+            const influence = 1 - blackHoleDistance / gravityRadius;
+
+            if (blackHolePhase === 'clear') {
+              blackHolePhase = 'pulling';
+              setMessage(
+                'BLACK HOLE DETECTED · EXTREME GRAVITATIONAL FORCE'
+              );
+            }
+
+            // Direction-sensitive gravity:
+            // Strong when flying towards the black hole,
+            // weak when crossing sideways, almost absent when escaping.
+            const approachAlignment = direction.dot(pullDirection);
+            const approachFactor = Math.max(0, approachAlignment);
+
+            const gravityFactor = approachAlignment > 0
+              ? 0.08 + approachFactor * approachFactor * 0.92
+              : 0.015;
+
+            const gravityAcceleration =
+              (12 + influence * influence * 180) * gravityFactor;
+
+            blackHoleVelocity.addScaledVector(
+              pullDirection,
+              gravityAcceleration * dt
+            );
+
+            // Remove accumulated inward momentum when the pilot
+            // turns sideways or away from the black hole.
+            if (approachAlignment <= 0) {
+              const inwardVelocity = blackHoleVelocity.dot(pullDirection);
+
+              if (inwardVelocity > 0) {
+                blackHoleVelocity.addScaledVector(
+                  pullDirection,
+                  -inwardVelocity * Math.min(1, dt * 4)
+                );
+              }
+            }
+
+            blackHoleVelocity.multiplyScalar(
+              Math.max(0, 1 - dt * 0.65)
+            );
+            blackHoleVelocity.clampLength(0, 190);
+
+            ship.position.addScaledVector(blackHoleVelocity, dt);
+
+            if (
+              blackHoleDistance < 850 &&
+              now - telemetryAt > 1200
+            ) {
+              setMessage(
+                'CRITICAL GRAVITY · BOOST AND STEER TO ESCAPE'
+              );
+            }
+
+            // The event horizon triggers an impact explosion.
+            if (blackHoleDistance <= eventHorizonRadius) {
+              blackHolePhase = 'disintegrated';
+              blackHolePullStartedAt = now;
+              blackHoleRespawnAt = now + 3500;
+
+              blackHoleShardGroup.position.copy(ship.position);
+              blackHoleShardGroup.rotation.copy(ship.rotation);
+              blackHoleShardGroup.scale.setScalar(1);
+              blackHoleShardGroup.visible = true;
+
+              blackHoleBlastRing.visible = true;
+              blackHoleBlastRing.scale.setScalar(1);
+              blackHoleBlastRingMaterial.opacity = 1;
+
+              blackHoleFlash.visible = true;
+              blackHoleFlash.scale.setScalar(1);
+              blackHoleFlashMaterial.opacity = 1;
+
+              blackHoleShockRings.forEach((ring, index) => {
+                ring.visible = true;
+                ring.scale.setScalar(0.15);
+                ring.rotation.z = index * 1.1;
+                blackHoleShockMaterials[index].opacity = 1;
+              });
+
+              blackHoleDebris.forEach((debris, index) => {
+                const angle = index * 2.399963;
+                const vertical = ((index % 9) - 4) / 5;
+                const direction = new THREE.Vector3(
+                  Math.cos(angle),
+                  vertical,
+                  Math.sin(angle)
+                ).normalize();
+
+                debris.position.copy(direction).multiplyScalar(0.8);
+                debris.scale.setScalar(0.8 + (index % 4) * 0.25);
+                debris.rotation.set(angle, angle * 0.7, angle * 1.3);
+                debris.userData.blastVelocity = direction.multiplyScalar(
+                  48 + (index % 7) * 13
+                );
+                debris.visible = true;
+              });
+
+              blackHoleShards.forEach((shard, index) => {
+                const angle = index * 2.399963;
+                const direction = new THREE.Vector3(
+                  Math.cos(angle),
+                  Math.sin(index * 1.7) * 0.8,
+                  Math.sin(angle)
+                ).normalize();
+
+                shard.position.copy(direction).multiplyScalar(0.65);
+                shard.rotation.set(angle, angle * 0.7, angle * 1.3);
+                shard.scale.setScalar(1);
+                shard.userData.pullDirection = direction;
+                shard.visible = true;
+              });
+
+              ship.visible = false;
+              currentSpeed = 0;
+              blackHoleVelocity.set(0, 0, 0);
+              state.keys.clear();
+              state.autopilotTarget = null;
+
+              setMessage(
+                'EVENT HORIZON IMPACT · SPACECRAFT DISINTEGRATED'
+              );
+            }
+          } else if (
+            blackHolePhase === 'pulling' &&
+            blackHoleDistance > 2900 &&
+            blackHoleVelocity.length() < 25
+          ) {
+            blackHolePhase = 'clear';
+            blackHoleVelocity.set(0, 0, 0);
+            setMessage('GRAVITY ESCAPED · FLIGHT SYSTEMS RECOVERED');
+          }
+        }
+
+        if (
+          state.mode === 'space' &&
+          solarHazardPhase !== 'exploded' &&
+          blackHolePhase === 'clear'
+        ) {
           const sunDistance = ship.position.distanceTo(sunPosition);
 
           if (solarHazardPhase === 'clear' && sunDistance <= 900) {
@@ -1585,7 +1897,47 @@ function App() {
 
         stars.rotation.y += dt * 0.0015;
         galaxy.rotation.z += dt * 0.000035;
-        state.asteroids.forEach(item => { item.mesh.rotation.x += dt * 0.035; item.mesh.rotation.y += dt * 0.022; });
+        state.asteroids.forEach(item => {
+          const rock = item.mesh;
+          rock.rotation.x += dt * 0.035;
+          rock.rotation.y += dt * 0.022;
+
+          const distance = rock.position.distanceTo(blackHoleGroup.position);
+
+          if (!rock.userData.blackHoleCaptured && distance < 1800) {
+            rock.userData.blackHoleCaptured = true;
+            rock.userData.originalScale = rock.scale.clone();
+          }
+
+          if (rock.userData.blackHoleCaptured && rock.visible) {
+            const inward = blackHoleGroup.position.clone().sub(rock.position);
+            const currentDistance = inward.length();
+
+            if (currentDistance > 0.001) {
+              inward.normalize();
+
+              // A tangential component creates a visible spiralling path.
+              const tangent = new THREE.Vector3(-inward.z, 0.22, inward.x).normalize();
+              const pullStrength = 90 + Math.max(0, 1800 - currentDistance) * 0.35;
+
+              rock.position.addScaledVector(inward, pullStrength * dt);
+              rock.position.addScaledVector(tangent, (24 + pullStrength * 0.12) * dt);
+
+              const remaining = THREE.MathUtils.clamp(
+                (currentDistance - 155) / 1645,
+                0.025,
+                1
+              );
+              const originalScale = rock.userData.originalScale as THREE.Vector3;
+              rock.scale.copy(originalScale).multiplyScalar(remaining);
+
+              if (currentDistance < 155) {
+                rock.visible = false;
+                rock.scale.setScalar(0);
+              }
+            }
+          }
+        });
         planetGroups.forEach((group, planetId) => {
           const planetIndex = initialPlanets.findIndex(planet => planet.id === planetId);
           const planet = initialPlanets[planetIndex];
@@ -1717,6 +2069,110 @@ function App() {
         }
       }
 
+      if (blackHolePhase === 'disintegrated') {
+        const elapsed = Math.max(
+          0,
+          (now - blackHolePullStartedAt) / 1000
+        );
+
+        const blastProgress = THREE.MathUtils.clamp(elapsed / 0.7, 0, 1);
+        blackHoleBlastRing.scale.setScalar(1 + blastProgress * 95);
+        blackHoleBlastRingMaterial.opacity = 1 - blastProgress;
+        // A powerful initial flash followed by a large expanding blast.
+        const flashProgress = THREE.MathUtils.clamp(elapsed / 0.42, 0, 1);
+        blackHoleBlastRing.scale.setScalar(1 + blastProgress * 120);
+        blackHoleBlastRingMaterial.opacity = 1 - blastProgress;
+        blackHoleFlash.scale.setScalar(1 + flashProgress * 58);
+        blackHoleFlashMaterial.opacity = Math.max(0, 1 - flashProgress);
+
+        // Staggered shockwaves make the explosion visibly spread through space.
+        blackHoleShockRings.forEach((ring, index) => {
+          const progress = THREE.MathUtils.clamp(
+            (elapsed - index * 0.12) / 1.15,
+            0,
+            1
+          );
+          ring.scale.setScalar(0.15 + progress * (145 + index * 24));
+          ring.rotation.z += dt * (index % 2 ? -1.8 : 2.2);
+          ring.rotation.x += dt * 0.35;
+          blackHoleShockMaterials[index].opacity = 1 - progress;
+        });
+
+        // Debris bursts outward, tumbles, and gradually fades away.
+        blackHoleDebris.forEach((debris, index) => {
+          const velocity = debris.userData.blastVelocity as THREE.Vector3;
+          debris.position.addScaledVector(velocity, dt);
+          velocity.multiplyScalar(Math.max(0, 1 - dt * 0.48));
+          debris.rotation.x += dt * (5 + index % 5);
+          debris.rotation.y += dt * (4 + index % 7);
+          const fade = Math.max(0, 1 - elapsed / 2.8);
+          debris.scale.setScalar((0.8 + (index % 4) * 0.25) * fade);
+        });
+
+        blackHoleShards.forEach((shard, index) => {
+          const direction = shard.userData.pullDirection as THREE.Vector3;
+          const inward = blackHoleGroup.position
+            .clone()
+            .sub(blackHoleShardGroup.position)
+            .normalize();
+
+          shard.position.addScaledVector(direction, dt * (65 + index % 4 * 9));
+          shard.position.addScaledVector(inward, dt * (5 + elapsed * 8));
+          shard.rotation.x += dt * (2 + index * 0.08);
+          shard.rotation.y += dt * (2.5 + index * 0.06);
+          shard.scale.multiplyScalar(Math.max(0, 1 - dt * 0.9));
+        });
+
+        if (now >= blackHoleRespawnAt) {
+          blackHoleShardGroup.visible = false;
+          blackHoleBlastRing.visible = false;
+          blackHoleBlastRing.scale.setScalar(1);
+          blackHoleBlastRingMaterial.opacity = 1;
+          blackHoleFlash.visible = false;
+          blackHoleFlash.scale.setScalar(1);
+          blackHoleFlashMaterial.opacity = 1;
+
+          blackHoleShockRings.forEach((ring, index) => {
+            ring.visible = false;
+            ring.scale.setScalar(0.15);
+            blackHoleShockMaterials[index].opacity = 1;
+          });
+
+          blackHoleDebris.forEach(debris => {
+            debris.visible = false;
+            debris.scale.setScalar(1);
+            debris.userData.blastVelocity = new THREE.Vector3();
+          });
+
+          blackHoleShardGroup.scale.setScalar(1);
+          blackHoleVelocity.set(0, 0, 0);
+
+          blackHoleShards.forEach(shard => {
+            shard.visible = false;
+            shard.scale.setScalar(1);
+          });
+
+          ship.visible = true;
+          ship.scale.setScalar(1);
+          ship.position.set(0, 0, 0);
+          ship.rotation.set(0, 0, 0);
+          state.velocity.set(0, 0, 0);
+          state.yaw = 0;
+          state.pitch = 0;
+          state.roll = 0;
+          state.autopilotTarget = null;
+          state.keys.clear();
+          currentSpeed = 0;
+          blackHolePhase = 'clear';
+          nearPlanetRef.current = null;
+          setNearPlanet(null);
+          camera.position.set(0, 5.3, 14);
+          camera.lookAt(0, 0, -16);
+          setMessage('BLACK HOLE ESCAPE · SHIP RECONSTRUCTED AT HOME');
+        }
+      }
+
+      blackHoleAnimation?.update(dt, now * 0.001);
       renderer.render(scene, camera);
       if (now - telemetryAt > 350) {
         telemetryAt = now;
@@ -1728,6 +2184,12 @@ function App() {
 
     return () => {
       sceneAlive = false;
+      blackHoleAnimation?.dispose();
+      blackHoleAnimation = null;
+      blackHoleBlastRing.geometry.dispose();
+      blackHoleBlastRingMaterial.dispose();
+      blackHoleFlash.geometry.dispose();
+      blackHoleFlashMaterial.dispose();
       voxelWaterMesh = null;
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', resize);
