@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createBlackHoleAnimation } from './black-hole/martins-black-hole-animation';
 import { api, ws } from './appdeploy-client';
 import { VoiceChat, type VoiceMode, type VoicePeer } from './voice-chat';
+import { GameAudio } from './audio/game-audio';
 import {
   Activity, ChevronDown, Crosshair, Eye, EyeOff, Gauge, Globe2, Mic, MicOff, Mountain, Radar,
   Rocket, Satellite, Scan, Shield, Sparkles, Target, Users, Zap,
@@ -626,6 +627,7 @@ function App() {
   const [usernameError, setUsernameError] = useState('');
   const pilotIdRef = useRef(`pilot-${Math.random().toString(36).slice(2, 12)}`);
   const voiceRef = useRef<VoiceChat | null>(null);
+  const gameAudioRef = useRef<GameAudio | null>(null);
   const voiceSendRef = useRef<((message: unknown) => boolean) | null>(null);
   const voiceConnectionIdRef = useRef('');
   const [voiceStatus, setVoiceStatus] = useState('VOICE OFF');
@@ -1620,6 +1622,11 @@ function App() {
         const climb = controlsEnabled && state.keys.has('r');
         const descend = controlsEnabled && state.keys.has('f');
         const boost = controlsEnabled && state.keys.has('shift');
+        gameAudioRef.current?.updateEngine(
+          controlsEnabled && state.mode !== 'landing',
+          boost,
+          currentSpeed
+        );
         const turn = (state.mode === 'surface' ? 0.95 : 1.25) * dt;
         if (state.autopilotTarget && state.mode === 'space') {
           const destination = initialPlanets.find(item => item.id === state.autopilotTarget);
@@ -1786,6 +1793,7 @@ function App() {
               state.keys.clear();
               state.autopilotTarget = null;
 
+              gameAudioRef.current?.playBlackHoleExplosion();
               setExplosionNotice('black-hole');
               setMessage(
                 'EVENT HORIZON IMPACT · SPACECRAFT DISINTEGRATED'
@@ -1836,6 +1844,7 @@ function App() {
             currentSpeed = 0;
             state.keys.clear();
             state.autopilotTarget = null;
+            gameAudioRef.current?.playSolarExplosion();
             setExplosionNotice('solar');
             setMessage('SOLAR CORE DISINTEGRATION · JET DESTROYED');
           }
@@ -2194,6 +2203,8 @@ function App() {
       blackHoleFlash.geometry.dispose();
       blackHoleFlashMaterial.dispose();
       voxelWaterMesh = null;
+      gameAudioRef.current?.dispose();
+      gameAudioRef.current = null;
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', keyDown);
@@ -2618,6 +2629,9 @@ function App() {
           setPilotName(cleanName);
           localStorage.setItem('galaxy-explorer-username', cleanName);
           setUsernameError('');
+          gameAudioRef.current?.dispose();
+          gameAudioRef.current = new GameAudio();
+          gameAudioRef.current.start();
           setGameStarted(true);
         }}>
           <div className="pilot-entry-mark"><Rocket size={25} /></div>
