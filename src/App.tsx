@@ -1285,6 +1285,111 @@ function App() {
     let last = performance.now();
     let currentSpeed = 0;
     let telemetryAt = 0;
+
+    // Lightweight local solar-hazard effects.
+    let solarHazardPhase: 'clear' | 'warning' | 'burning' | 'exploded' = 'clear';
+    let solarExplosionStartedAt = 0;
+    let solarRespawnAt = 0;
+
+    const solarFireGroup = new THREE.Group();
+    solarFireGroup.name = 'solar-hull-fire';
+    solarFireGroup.visible = false;
+    ship.add(solarFireGroup);
+
+    const solarFireMeshes: THREE.Mesh[] = [];
+    const firePositions: Array<[number, number, number]> = [
+      [-1.0, 0.15, 0], [1.0, 0.15, 0],
+      [-0.55, 0.65, -0.8], [0.55, 0.65, -0.8],
+      [-0.55, -0.45, 0.9], [0.55, -0.45, 0.9],
+      [0, 0.8, 0.65], [0, -0.65, -0.55],
+    ];
+
+    firePositions.forEach(([x, y, z], index) => {
+      const material = new THREE.MeshBasicMaterial({
+        color: index % 2 ? 0xffa12b : 0xff4a16,
+        transparent: true,
+        opacity: 0.86,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const flame = new THREE.Mesh(
+        new THREE.ConeGeometry(0.48 + (index % 3) * 0.12, 3.0 + (index % 2) * 1.1, 7),
+        material
+      );
+      flame.position.set(x, y, z);
+      flame.rotation.z = (index % 2 ? 1 : -1) * 0.28;
+      flame.rotation.x = (index % 3 - 1) * 0.22;
+      solarFireGroup.add(flame);
+      solarFireMeshes.push(flame);
+    });
+
+    const solarExplosionGroup = new THREE.Group();
+    solarExplosionGroup.name = 'solar-jet-explosion';
+    solarExplosionGroup.visible = false;
+
+    const explosionRingMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffb347,
+      transparent: true,
+      opacity: 1,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const explosionRing = new THREE.Mesh(
+      new THREE.TorusGeometry(1, 0.16, 8, 40),
+      explosionRingMaterial
+    );
+    solarExplosionGroup.add(explosionRing);
+
+    const explosionFlashMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffe1a0,
+      transparent: true,
+      opacity: 1,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const explosionFlash = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 8),
+      explosionFlashMaterial
+    );
+    solarExplosionGroup.add(explosionFlash);
+
+    const explosionParticleGeometry = new THREE.SphereGeometry(0.28, 8, 6);
+    const explosionParticles: Array<{
+      mesh: THREE.Mesh;
+      velocity: THREE.Vector3;
+      origin: THREE.Vector3;
+    }> = [];
+
+    for (let i = 0; i < 24; i++) {
+      const angle = i * 2.399963;
+      const vertical = ((i % 7) - 3) / 3;
+      const direction = new THREE.Vector3(
+        Math.cos(angle),
+        vertical,
+        Math.sin(angle)
+      ).normalize();
+
+      const particle = new THREE.Mesh(
+        explosionParticleGeometry,
+        new THREE.MeshBasicMaterial({
+          color: i % 3 === 0 ? 0xffe5a0 : i % 3 === 1 ? 0xff7628 : 0xff3518,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      const origin = direction.clone().multiplyScalar(0.8);
+      particle.position.copy(origin);
+      solarExplosionGroup.add(particle);
+      explosionParticles.push({
+        mesh: particle,
+        velocity: direction.multiplyScalar(22 + (i % 5) * 6),
+        origin,
+      });
+    }
+
+    scene.add(solarExplosionGroup);
     let mapTelemetryAt = 0;
 
     const orbitAngles: Record<string, number> = {};
@@ -1344,15 +1449,16 @@ function App() {
           setMessage('SURFACE LANDING COMPLETE · PLANETARY TERRAIN ACCESSIBLE');
         }
       } else {
-        const forward = state.keys.has('w') || state.keys.has('arrowup') || Boolean(state.autopilotTarget);
-        const reverse = state.keys.has('s') || state.keys.has('arrowdown');
-        const left = state.keys.has('a') || state.keys.has('arrowleft');
-        const right = state.keys.has('d') || state.keys.has('arrowright');
-        const up = state.keys.has(' ');
-        const down = state.keys.has('f');
-        const climb = state.keys.has('r');
-        const descend = state.keys.has('f');
-        const boost = state.keys.has('shift');
+        const controlsEnabled = solarHazardPhase !== 'exploded';
+        const forward = controlsEnabled && (state.keys.has('w') || state.keys.has('arrowup') || Boolean(state.autopilotTarget));
+        const reverse = controlsEnabled && (state.keys.has('s') || state.keys.has('arrowdown'));
+        const left = controlsEnabled && (state.keys.has('a') || state.keys.has('arrowleft'));
+        const right = controlsEnabled && (state.keys.has('d') || state.keys.has('arrowright'));
+        const up = controlsEnabled && state.keys.has(' ');
+        const down = controlsEnabled && state.keys.has('f');
+        const climb = controlsEnabled && state.keys.has('r');
+        const descend = controlsEnabled && state.keys.has('f');
+        const boost = controlsEnabled && state.keys.has('shift');
         const turn = (state.mode === 'surface' ? 0.95 : 1.25) * dt;
         if (state.autopilotTarget && state.mode === 'space') {
           const destination = initialPlanets.find(item => item.id === state.autopilotTarget);
@@ -1385,6 +1491,41 @@ function App() {
         const previousPosition = ship.position.clone();
         ship.position.addScaledVector(direction, currentSpeed * dt);
         ship.position.y += ((climb ? 1 : 0) - (descend ? 1 : 0)) * (state.mode === 'surface' ? 34 : 48) * dt;
+
+        if (state.mode === 'space' && solarHazardPhase !== 'exploded') {
+          const sunDistance = ship.position.distanceTo(sunPosition);
+
+          if (solarHazardPhase === 'clear' && sunDistance <= 900) {
+            solarHazardPhase = 'warning';
+            setMessage('SOLAR PROXIMITY WARNING · EXTREME RADIATION DETECTED');
+          } else if (solarHazardPhase === 'warning' && sunDistance <= 450) {
+            solarHazardPhase = 'burning';
+            solarFireGroup.visible = true;
+            setMessage('CRITICAL SOLAR HEAT · HULL IN FLAMES · PULL AWAY NOW');
+          } else if (solarHazardPhase === 'burning' && sunDistance > 560) {
+            solarHazardPhase = 'warning';
+            solarFireGroup.visible = false;
+            setMessage('SOLAR HEAT REDUCING · HULL TEMPERATURE FALLING');
+          } else if (solarHazardPhase === 'warning' && sunDistance > 980) {
+            solarHazardPhase = 'clear';
+            setMessage('SOLAR HAZARD CLEARED · FLIGHT SYSTEMS STABLE');
+          }
+
+          if (sunDistance <= 145) {
+            solarHazardPhase = 'exploded';
+            solarExplosionStartedAt = now;
+            solarRespawnAt = now + 3200;
+            solarExplosionGroup.position.copy(ship.position);
+            solarExplosionGroup.visible = true;
+            solarFireGroup.visible = false;
+            ship.visible = false;
+            currentSpeed = 0;
+            state.keys.clear();
+            state.autopilotTarget = null;
+            setMessage('SOLAR CORE DISINTEGRATION · JET DESTROYED');
+          }
+        }
+
         if (state.mode === 'space') {
           const impact = state.asteroids.find(item => ship.position.distanceTo(item.mesh.position) < item.radius + 3.2);
           if (impact) {
@@ -1526,6 +1667,55 @@ function App() {
         remote.rotation.y += yawDifference * smoothing;
         remote.rotation.x += (targetPitch - remote.rotation.x) * smoothing;
       });
+
+      if (solarHazardPhase === 'burning') {
+        solarFireMeshes.forEach((flame, index) => {
+          const flicker = 0.82 + Math.sin(now * 0.018 + index * 2.1) * 0.22;
+          flame.scale.set(0.8 + flicker * 0.3, flicker, 0.8 + flicker * 0.25);
+          (flame.material as THREE.MeshBasicMaterial).opacity = 0.62 + flicker * 0.25;
+        });
+      }
+
+      if (solarHazardPhase === 'exploded') {
+        const elapsed = Math.max(0, (now - solarExplosionStartedAt) / 1000);
+
+        explosionParticles.forEach(({ mesh, velocity, origin }) => {
+          mesh.position.copy(origin).addScaledVector(velocity, elapsed);
+          const fade = Math.max(0, 1 - elapsed / 2.7);
+          mesh.scale.setScalar(fade);
+          (mesh.material as THREE.MeshBasicMaterial).opacity = fade;
+        });
+
+        explosionRing.scale.setScalar(0.1 + elapsed * 13);
+        explosionRingMaterial.opacity = Math.max(0, 1 - elapsed / 1.5);
+        explosionFlash.scale.setScalar(0.5 + elapsed * 8);
+        explosionFlashMaterial.opacity = Math.max(0, 1 - elapsed / 0.42);
+
+        if (elapsed < 1.6) {
+          camera.position.x += Math.sin(now * 0.075) * 0.18;
+          camera.position.y += Math.cos(now * 0.091) * 0.14;
+        }
+
+        if (now >= solarRespawnAt) {
+          solarExplosionGroup.visible = false;
+          ship.visible = true;
+          ship.position.set(0, 0, 0);
+          ship.rotation.set(0, 0, 0);
+          state.velocity.set(0, 0, 0);
+          state.yaw = 0;
+          state.pitch = 0;
+          state.roll = 0;
+          state.autopilotTarget = null;
+          state.keys.clear();
+          currentSpeed = 0;
+          solarHazardPhase = 'clear';
+          nearPlanetRef.current = null;
+          setNearPlanet(null);
+          camera.position.set(0, 5.3, 14);
+          camera.lookAt(0, 0, -16);
+          setMessage('EMERGENCY RECONSTRUCTION COMPLETE · HOME POSITION RESTORED');
+        }
+      }
 
       renderer.render(scene, camera);
       if (now - telemetryAt > 350) {
