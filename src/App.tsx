@@ -832,18 +832,44 @@ function App() {
     sunMesh.name = 'sun-surface';
     sunGroup.add(sunMesh);
 
+    const sunInnerGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(96, 40, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xfff0bd,
+        transparent: true,
+        opacity: 0.20,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    sunInnerGlow.name = 'sun-hot-inner-corona';
+    sunGroup.add(sunInnerGlow);
+
     const sunGlow = new THREE.Mesh(
       new THREE.SphereGeometry(108, 40, 32),
       new THREE.MeshBasicMaterial({
-        color: 0xffa34d,
+        color: 0xff852e,
         transparent: true,
-        opacity: 0.19,
+        opacity: 0.34,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
     );
     sunGlow.name = 'sun-corona';
     sunGroup.add(sunGlow);
+
+    const sunOuterGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(145, 40, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xff4b16,
+        transparent: true,
+        opacity: 0.16,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    sunOuterGlow.name = 'sun-outer-fire-corona';
+    sunGroup.add(sunOuterGlow);
     scene.add(sunGroup);
 
     // Distant black-hole landmark beyond the planetary system.
@@ -851,13 +877,13 @@ function App() {
     blackHoleGroup.name = 'martins-black-hole';
     // Elevated landmark visible from the starting flight corridor.
     blackHoleGroup.position.set(-950, 0, -2750);
-    blackHoleGroup.scale.setScalar(125);
+    blackHoleGroup.scale.setScalar(100.0);
     scene.add(blackHoleGroup);
 
     let blackHoleAnimation: ReturnType<typeof createBlackHoleAnimation> | null = null;
 
     gltfLoader.load(
-      '/assets/martins_black_hole.glb',
+      '/assets/sketchfab-blackhole.glb',
       (gltf) => {
         if (!sceneAlive) {
           gltf.scene.traverse(object => {
@@ -877,13 +903,13 @@ function App() {
         }
 
         blackHoleGroup.add(gltf.scene);
-        blackHoleAnimation = createBlackHoleAnimation(gltf.scene);
+        blackHoleAnimation = createBlackHoleAnimation(gltf.scene, gltf.animations);
       },
       undefined,
       (error) => console.error('Unable to load black-hole model:', error)
     );
 
-    const sunlight = new THREE.PointLight(0xffd4a0, 1800, 18000, 2);
+    const sunlight = new THREE.PointLight(0xffd4a0, 2200, 18000, 2);
     sunlight.position.copy(sunPosition);
     scene.add(sunlight);
 
@@ -1967,7 +1993,15 @@ function App() {
 
         earthMoonPivot.rotation.y += dt * 0.19;
         sunMesh.rotation.y += dt * 0.025;
+        sunInnerGlow.rotation.y += dt * 0.018;
         sunGlow.rotation.y -= dt * 0.012;
+        sunOuterGlow.rotation.y += dt * 0.009;
+        sunInnerGlow.scale.setScalar(
+          1 + Math.sin(now * 0.0018) * 0.025
+        );
+        sunOuterGlow.scale.setScalar(
+          1 + Math.sin(now * 0.0011 + 1.4) * 0.04
+        );
 
         stars.rotation.y += dt * 0.0015;
         cinematicNebula.update(now * 0.001);
@@ -2024,8 +2058,22 @@ function App() {
               rock.scale.copy(originalScale).multiplyScalar(remaining);
 
               if (currentDistance < 155) {
-                rock.visible = false;
-                rock.scale.setScalar(0);
+                // Recycle consumed asteroids into the outer feeding region.
+                // This maintains a continuous stream without creating new meshes.
+                const spawnAngle = Math.random() * Math.PI * 2;
+                const spawnRadius = 1450 + Math.random() * 200;
+                const spawnHeight = (Math.random() - 0.5) * 420;
+
+                rock.position.set(
+                  blackHoleGroup.position.x + Math.cos(spawnAngle) * spawnRadius,
+                  blackHoleGroup.position.y + spawnHeight,
+                  blackHoleGroup.position.z + Math.sin(spawnAngle) * spawnRadius
+                );
+
+                const originalScale = rock.userData.originalScale as THREE.Vector3;
+                rock.scale.copy(originalScale);
+                rock.visible = true;
+                rock.userData.blackHoleCaptured = false;
               }
             }
           }

@@ -32,7 +32,7 @@ const designs = [
   },
   {
     name: 'Golden Eternity',
-    position: [0, 0, -11500] as [number, number, number],
+    position: [7000, 0, -8200] as [number, number, number],
     radius: 950,
     colors: [0xffffff, 0xffdf86, 0xff7029],
     starSpeed: 2.15,
