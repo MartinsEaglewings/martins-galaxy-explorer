@@ -995,39 +995,56 @@ function App() {
     surfaceSky.visible = false;
     scene.add(surfaceSky);
 
+
     const ship = new THREE.Group();
-    const hullMat = new THREE.MeshStandardMaterial({ color: 0xc9d8eb, metalness: 0.82, roughness: 0.26 });
-    const darkMat = new THREE.MeshStandardMaterial({ color: 0x182943, metalness: 0.7, roughness: 0.34 });
-    const glowMat = new THREE.MeshBasicMaterial({ color: 0x3bdcff });
-    const body = new THREE.Mesh(new THREE.ConeGeometry(1.15, 5.8, 8), hullMat);
-    body.rotation.x = -Math.PI / 2;
-    ship.add(body);
-    const cockpit = new THREE.Mesh(
-      new THREE.SphereGeometry(0.78, 24, 18),
-      new THREE.MeshPhysicalMaterial({ color: 0x2a9ec8, metalness: 0.4, roughness: 0.12, transmission: 0.18, transparent: true, opacity: 0.9 })
+
+    // Keep the game's existing ship coordinate system and flight physics.
+    // The new GLB faces +Z, while the game flies forward along -Z.
+    const shipModelRoot = new THREE.Group();
+    shipModelRoot.rotation.y = Math.PI;
+    shipModelRoot.scale.setScalar(0.68);
+    ship.add(shipModelRoot);
+
+    gltfLoader.load(
+      '/assets/martins_galaxy_futuristic_jet.glb',
+      (gltf) => {
+        if (!sceneAlive) {
+          gltf.scene.traverse((object) => {
+            if (object instanceof THREE.Mesh) {
+              object.geometry.dispose();
+              const materials = Array.isArray(object.material)
+                ? object.material
+                : [object.material];
+              materials.forEach((material) => material.dispose());
+            }
+          });
+          return;
+        }
+
+        shipModelRoot.add(gltf.scene);
+      },
+      undefined,
+      (error) => {
+        console.error('Unable to load futuristic jet model:', error);
+      }
     );
-    cockpit.position.set(0, 0.45, -0.35);
-    cockpit.scale.set(0.78, 0.55, 1.15);
-    ship.add(cockpit);
-    [-1, 1].forEach(side => {
-      const wing = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.18, 1.65), hullMat);
-      wing.position.set(side * 1.6, -0.1, 0.8);
-      wing.rotation.y = side * -0.12;
-      ship.add(wing);
-      const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.32, 1.15, 16), darkMat);
-      engine.rotation.x = Math.PI / 2;
-      engine.position.set(side * 1.45, -0.08, 2.4);
-      ship.add(engine);
-      const flame = new THREE.Mesh(new THREE.ConeGeometry(0.23, 2.4, 16), glowMat);
+
+    // Preserve the original runtime-controlled booster flames.
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0x3bdcff });
+
+    [-1, 1].forEach((side) => {
+      const flame = new THREE.Mesh(
+        new THREE.ConeGeometry(0.23, 2.4, 16),
+        glowMat
+      );
       flame.rotation.x = Math.PI / 2;
-      flame.position.set(side * 1.45, -0.08, 4.05);
+      flame.position.set(side * 0.50, -0.055, 4.33);
       flame.name = 'engine-flame';
       ship.add(flame);
     });
-    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.35, 1.25), hullMat);
-    fin.position.set(0, 0.65, 1.2);
-    ship.add(fin);
+
     scene.add(ship);
+
 
     const state: FlightScene = {
       ship, camera, renderer, scene, planets: planetGroups, surfaces,
