@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createBlackHoleAnimation } from './black-hole/martins-black-hole-animation';
+import { createCinematicNebula } from './cinematic/nebula-engine';
 import { api, ws } from './appdeploy-client';
 import { VoiceChat, type VoiceMode, type VoicePeer } from './voice-chat';
 import { GameAudio } from './audio/game-audio';
@@ -681,11 +682,7 @@ function App() {
     const stars = new THREE.Points(starGeometry, new THREE.PointsMaterial({ color: 0xc7d8ff, size: 1.05 }));
     scene.add(stars);
 
-    const nebula = new THREE.Mesh(
-      new THREE.SphereGeometry(720, 24, 18),
-      new THREE.MeshBasicMaterial({ color: 0x101b43, side: THREE.BackSide, transparent: true, opacity: 0.28 })
-    );
-    scene.add(nebula);
+    const cinematicNebula = createCinematicNebula(scene);
     const galaxyPositions = new Float32Array(2600 * 3);
     for (let i = 0; i < 2600; i++) {
       const arm = i % 4;
@@ -699,9 +696,6 @@ function App() {
     galaxyGeometry.setAttribute('position', new THREE.BufferAttribute(galaxyPositions, 3));
     const galaxy = new THREE.Points(galaxyGeometry, new THREE.PointsMaterial({ color: 0xb6a7ff, size: 2.1, transparent: true, opacity: 0.9 }));
     scene.add(galaxy);
-    const violetCloud = new THREE.Mesh(new THREE.SphereGeometry(1150, 20, 14), new THREE.MeshBasicMaterial({ color: 0x38265f, side: THREE.BackSide, transparent: true, opacity: 0.12, depthWrite: false }));
-    violetCloud.position.set(0, 0, -2500);
-    scene.add(violetCloud);
 
     const asteroidField = new THREE.Group();
     const asteroids: Array<{ mesh: THREE.Mesh; radius: number }> = [];
@@ -746,6 +740,14 @@ function App() {
     );
 
     const planetGroups = new Map<string, THREE.Group>();
+    const saturnRingSystems: Array<{
+      pivot: THREE.Group;
+      geometry: THREE.BufferGeometry;
+      angles: Float32Array;
+      radii: Float32Array;
+      speeds: Float32Array;
+      heights: Float32Array;
+    }> = [];
     const surfaces = new Map<string, THREE.Group>();
     const surfaceObstacles = new Map<string, SurfaceObstacle[]>();
     const gltfLoader = new GLTFLoader();
@@ -975,8 +977,14 @@ function App() {
       }
 
       if (planet.id === 'thalassa') {
+        const ringPivot = new THREE.Group();
+        ringPivot.name = 'saturn-ring-pivot';
+
+        const innerRadius = planet.size * 1.35;
+        const outerRadius = planet.size * 2.45;
+
         const rings = new THREE.Mesh(
-          new THREE.RingGeometry(planet.size * 1.35, planet.size * 2.45, 160),
+          new THREE.RingGeometry(innerRadius, outerRadius, 160),
           new THREE.MeshBasicMaterial({
             map: saturnRingTexture,
             side: THREE.DoubleSide,
@@ -987,7 +995,71 @@ function App() {
         );
         rings.name = 'saturn-rings';
         rings.rotation.x = -Math.PI / 2.35;
-        group.add(rings);
+        ringPivot.add(rings);
+
+        const particleCount = 120;
+        const particleGeometry = new THREE.BufferGeometry();
+        const particlePositions = new Float32Array(particleCount * 3);
+        const particleColors = new Float32Array(particleCount * 3);
+        const angles = new Float32Array(particleCount);
+        const radii = new Float32Array(particleCount);
+        const speeds = new Float32Array(particleCount);
+        const heights = new Float32Array(particleCount);
+
+        const iceColor = new THREE.Color(0xb9d9ed);
+        const goldColor = new THREE.Color(0xe8c58c);
+
+        for (let i = 0; i < particleCount; i++) {
+          angles[i] = Math.random() * Math.PI * 2;
+          radii[i] = innerRadius + Math.random() * (outerRadius - innerRadius);
+          speeds[i] = 0.035 + Math.random() * 0.075;
+          heights[i] = (Math.random() - 0.5) * 1.1;
+
+          particlePositions[i * 3] = Math.cos(angles[i]) * radii[i];
+          particlePositions[i * 3 + 1] = Math.sin(angles[i]) * radii[i];
+          particlePositions[i * 3 + 2] = heights[i];
+
+          const colour = iceColor.clone().lerp(goldColor, Math.random() * 0.42);
+          particleColors[i * 3] = colour.r;
+          particleColors[i * 3 + 1] = colour.g;
+          particleColors[i * 3 + 2] = colour.b;
+        }
+
+        particleGeometry.setAttribute(
+          'position',
+          new THREE.BufferAttribute(particlePositions, 3)
+        );
+        particleGeometry.setAttribute(
+          'color',
+          new THREE.BufferAttribute(particleColors, 3)
+        );
+
+        const ringParticles = new THREE.Points(
+          particleGeometry,
+          new THREE.PointsMaterial({
+            size: 1.25,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.78,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            sizeAttenuation: true,
+          })
+        );
+        ringParticles.name = 'saturn-orbiting-ice-particles';
+        ringParticles.rotation.x = -Math.PI / 2.35;
+        ringPivot.add(ringParticles);
+
+        group.add(ringPivot);
+
+        saturnRingSystems.push({
+          pivot: ringPivot,
+          geometry: particleGeometry,
+          angles,
+          radii,
+          speeds,
+          heights,
+        });
       }
 
       const atmosphere = new THREE.Mesh(
@@ -1909,6 +1981,24 @@ function App() {
 
         stars.rotation.y += dt * 0.0015;
         galaxy.rotation.z += dt * 0.000035;
+        cinematicNebula.update(now * 0.001);
+
+        saturnRingSystems.forEach(system => {
+          system.pivot.rotation.z += dt * 0.008;
+
+          const positions = system.geometry.attributes.position as THREE.BufferAttribute;
+          const array = positions.array as Float32Array;
+
+          for (let i = 0; i < system.angles.length; i++) {
+            system.angles[i] += system.speeds[i] * dt;
+            array[i * 3] = Math.cos(system.angles[i]) * system.radii[i];
+            array[i * 3 + 1] = Math.sin(system.angles[i]) * system.radii[i];
+            array[i * 3 + 2] = system.heights[i];
+          }
+
+          positions.needsUpdate = true;
+        });
+
         state.asteroids.forEach(item => {
           const rock = item.mesh;
           rock.rotation.x += dt * 0.035;
@@ -2196,6 +2286,7 @@ function App() {
 
     return () => {
       sceneAlive = false;
+      cinematicNebula.dispose();
       blackHoleAnimation?.dispose();
       blackHoleAnimation = null;
       blackHoleBlastRing.geometry.dispose();
