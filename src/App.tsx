@@ -610,6 +610,7 @@ function App() {
   const [boosting, setBoosting] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [message, setMessage] = useState('FLIGHT SYSTEMS ONLINE · READY FOR DEPARTURE');
+  const [explosionNotice, setExplosionNotice] = useState<'solar' | 'black-hole' | null>(null);
   const [showMap, setShowMap] = useState(false);
   const [hudVisible, setHudVisible] = useState(true);
   const [flightMode, setFlightMode] = useState<'space' | 'landing' | 'surface'>('space');
@@ -1785,6 +1786,7 @@ function App() {
               state.keys.clear();
               state.autopilotTarget = null;
 
+              setExplosionNotice('black-hole');
               setMessage(
                 'EVENT HORIZON IMPACT · SPACECRAFT DISINTEGRATED'
               );
@@ -1834,6 +1836,7 @@ function App() {
             currentSpeed = 0;
             state.keys.clear();
             state.autopilotTarget = null;
+            setExplosionNotice('solar');
             setMessage('SOLAR CORE DISINTEGRATION · JET DESTROYED');
           }
         }
@@ -2571,6 +2574,39 @@ function App() {
     <main className={`explorer ${hudClass}`}>
       <div className="space-canvas" ref={mountRef} />
       <div className="vignette" />
+      {explosionNotice && (
+        <div
+          className={`explosion-announcement ${explosionNotice === 'solar' ? 'solar-announcement' : 'black-hole-announcement'}`}
+          role="alert"
+          onAnimationEnd={() => setExplosionNotice(null)}
+        >
+          <div className="explosion-announcement-line">
+            <span />
+            {explosionNotice === 'solar' ? 'FLIGHT SYSTEM FAILURE' : 'GRAVITY EVENT DETECTED'}
+            <span />
+          </div>
+          <div className="explosion-announcement-title">
+            {explosionNotice === 'solar'
+              ? 'SOLAR CORE DISINTEGRATION'
+              : 'EVENT HORIZON CONSUMPTION'}
+          </div>
+          <div className="explosion-announcement-subtitle">
+            {explosionNotice === 'solar'
+              ? 'SPACECRAFT DESTROYED'
+              : 'SPACECRAFT DISINTEGRATED'}
+          </div>
+          <div className="explosion-announcement-detail">
+            {explosionNotice === 'solar'
+              ? 'EXTREME SOLAR HEAT AND RADIATION'
+              : 'EXTREME GRAVITATIONAL CAPTURE'}
+          </div>
+          <div className="explosion-announcement-footer">
+            {explosionNotice === 'solar'
+              ? 'EMERGENCY RECONSTRUCTION INITIATED'
+              : 'EVENT HORIZON BREACH · RECONSTRUCTION INITIATED'}
+          </div>
+        </div>
+      )}
       {!gameStarted && <div className="pilot-entry-screen">
         <form className="pilot-entry-card" onSubmit={(event) => {
           event.preventDefault();

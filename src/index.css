@@ -853,3 +853,105 @@ button { font: inherit; color: inherit; cursor: pointer; }
   filter: brightness(1.2);
   transform: translateY(1px);
 }
+
+
+/* Cinematic destruction announcements */
+.explosion-announcement {
+  position: absolute;
+  z-index: 20;
+  top: 46%;
+  left: 50%;
+  width: min(680px, calc(100vw - 36px));
+  transform: translate(-50%, -50%);
+  padding: 27px 22px 24px;
+  text-align: center;
+  pointer-events: none;
+  border-radius: 15px;
+  background: linear-gradient(180deg, rgba(8, 12, 25, .94), rgba(5, 8, 19, .88));
+  animation: explosion-announcement-sequence 7s ease-out both;
+}
+.explosion-announcement-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font: 9px 'DM Mono', monospace;
+  letter-spacing: 3px;
+  color: #c4d3e8;
+}
+.explosion-announcement-line span {
+  width: 34px;
+  height: 1px;
+  background: currentColor;
+  opacity: .65;
+}
+.explosion-announcement-title {
+  margin-top: 17px;
+  font-size: clamp(20px, 4.4vw, 39px);
+  line-height: 1.12;
+  font-weight: 900;
+  letter-spacing: 1.5px;
+  text-wrap: balance;
+  text-shadow: 0 0 24px currentColor;
+}
+.explosion-announcement-subtitle {
+  margin-top: 10px;
+  font: 700 clamp(11px, 2vw, 15px) 'DM Mono', monospace;
+  letter-spacing: 3px;
+  color: #fff;
+}
+.explosion-announcement-detail {
+  margin-top: 15px;
+  font: 9px 'DM Mono', monospace;
+  letter-spacing: 1.5px;
+  color: #d0d8e5;
+}
+.explosion-announcement-footer {
+  margin-top: 21px;
+  padding-top: 12px;
+  border-top: 1px solid currentColor;
+  font: 8px 'DM Mono', monospace;
+  letter-spacing: 1.3px;
+  opacity: .8;
+}
+.solar-announcement {
+  border: 1px solid rgba(255, 112, 55, .65);
+  box-shadow: 0 0 35px rgba(255, 77, 24, .28), inset 0 0 35px rgba(255, 85, 30, .08);
+  color: #ff985e;
+}
+.black-hole-announcement {
+  border: 1px solid rgba(174, 113, 255, .65);
+  box-shadow: 0 0 38px rgba(133, 75, 255, .3), inset 0 0 35px rgba(93, 64, 190, .12);
+  color: #c49aff;
+}
+@keyframes explosion-announcement-sequence {
+  0% { opacity: 0; transform: translate(-50%, -43%) scale(.88); }
+  10% { opacity: 1; transform: translate(-50%, -50%) scale(1.03); }
+  18% { transform: translate(-50%, -50%) scale(1); }
+  86% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -54%) scale(.97); }
+}
+@media(max-width: 480px) {
+  .explosion-announcement {
+    padding: 21px 12px 18px;
+  }
+  .explosion-announcement-line {
+    font-size: 7px;
+    letter-spacing: 1.7px;
+    gap: 7px;
+  }
+  .explosion-announcement-line span {
+    width: 18px;
+  }
+  .explosion-announcement-title {
+    letter-spacing: .5px;
+  }
+  .explosion-announcement-detail {
+    font-size: 7px;
+    letter-spacing: .8px;
+  }
+  .explosion-announcement-footer {
+    font-size: 7px;
+    letter-spacing: .6px;
+  }
+}
