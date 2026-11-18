@@ -957,7 +957,7 @@ function App() {
     blackHoleGroup.name = 'martins-black-hole';
     // Elevated landmark visible from the starting flight corridor.
     blackHoleGroup.position.set(-950, 0, -2750);
-    blackHoleGroup.scale.setScalar(100.5);
+    blackHoleGroup.scale.setScalar(20.0);
     scene.add(blackHoleGroup);
 
     let blackHoleAnimation: ReturnType<typeof createBlackHoleAnimation> | null = null;
