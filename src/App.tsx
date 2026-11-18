@@ -86,7 +86,7 @@ function impactCraterHeight(x: number, z: number, cx: number, cz: number, radius
 
 // Each explorable world has its own terrain profile.
 // Earth's original height function is deliberately preserved.
-function surfaceTerrainHeight(planetId: string, x: number, z: number, seed: number) {
+function proceduralSurfaceTerrainHeight(planetId: string, x: number, z: number, seed: number) {
   const importedSampler = terrainHeightSamplers.get(planetId);
   if (importedSampler) return importedSampler(x, z);
   if (planetId === 'verdant') return terrainHeight(x, z, seed);
@@ -162,6 +162,29 @@ function surfaceTerrainHeight(planetId: string, x: number, z: number, seed: numb
     default:
       return terrainHeight(x, z, seed);
   }
+}
+
+
+// Preserve the imported central landscape and extend its height profile outward.
+function surfaceTerrainHeight(planetId: string, x: number, z: number, seed: number) {
+  const importedSampler = terrainHeightSamplers.get(planetId);
+  if (!importedSampler) return proceduralSurfaceTerrainHeight(planetId, x, z, seed);
+
+  const limit = 380;
+  const edgeX = THREE.MathUtils.clamp(x, -limit, limit);
+  const edgeZ = THREE.MathUtils.clamp(z, -limit, limit);
+
+  if (edgeX === x && edgeZ === z) return importedSampler(x, z);
+
+  const distance = Math.max(Math.abs(x), Math.abs(z)) - limit;
+  const blend = THREE.MathUtils.clamp(distance / 520, 0, 1);
+  const smoothBlend = blend * blend * (3 - 2 * blend);
+
+  const importedEdge = importedSampler(edgeX, edgeZ);
+  const proceduralEdge = proceduralSurfaceTerrainHeight(planetId, edgeX, edgeZ, seed);
+  const proceduralOuter = proceduralSurfaceTerrainHeight(planetId, x, z, seed);
+
+  return importedEdge + (proceduralOuter - proceduralEdge) * smoothBlend;
 }
 
 function makeEarthCity(group: THREE.Group, obstacles: SurfaceObstacle[], seed: number) {
@@ -367,6 +390,63 @@ function makeSurface(planet: Planet, groundY: number) {
   terrain.name = 'procedural-terrain-fallback';
   terrain.receiveShadow = true;
   group.add(terrain);
+
+  // Four adjoining sections extend the world to 3,040 x 3,040 units.
+  const addTerrainExtension = (
+    width: number, depth: number,
+    centerX: number, centerZ: number,
+    segmentsX: number, segmentsZ: number
+  ) => {
+    const extensionGeometry = new THREE.PlaneGeometry(
+      width, depth, segmentsX, segmentsZ
+    );
+    extensionGeometry.rotateX(-Math.PI / 2);
+
+    const extensionPositions =
+      extensionGeometry.attributes.position as THREE.BufferAttribute;
+    const extensionColors: number[] = [];
+
+    for (let i = 0; i < extensionPositions.count; i++) {
+      const x = centerX + extensionPositions.getX(i);
+      const z = centerZ + extensionPositions.getZ(i);
+      const height = surfaceTerrainHeight(planet.id, x, z, terrainSeed);
+      extensionPositions.setY(i, height);
+
+      const tint = THREE.MathUtils.clamp((height + 22) / 65, 0, 1);
+      const detail =
+        (Math.sin(x * 0.061 + z * 0.047 + terrainSeed) + 1) * 0.5;
+      const blend = planet.id === 'verdant'
+        ? tint * 0.82
+        : THREE.MathUtils.clamp(tint * 0.68 + detail * 0.22, 0, 1);
+
+      const color = base.clone().lerp(high, blend);
+      extensionColors.push(color.r, color.g, color.b);
+    }
+
+    extensionGeometry.setAttribute(
+      'color', new THREE.Float32BufferAttribute(extensionColors, 3)
+    );
+    extensionGeometry.computeVertexNormals();
+
+    const extension = new THREE.Mesh(
+      extensionGeometry,
+      new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 1,
+        metalness: 0
+      })
+    );
+
+    extension.position.set(centerX, 0, centerZ);
+    extension.name = 'expanded-planet-terrain';
+    extension.receiveShadow = true;
+    group.add(extension);
+  };
+
+  addTerrainExtension(3040, 1140, 0, -950, 128, 48);
+  addTerrainExtension(3040, 1140, 0, 950, 128, 48);
+  addTerrainExtension(1140, 760, -950, 0, 48, 32);
+  addTerrainExtension(1140, 760, 950, 0, 48, 32);
 
   const rockMat = new THREE.MeshStandardMaterial({
     color: planet.id === 'verdant' ? high : palette.rock,
