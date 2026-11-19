@@ -11,6 +11,8 @@
     "start": "node backend/server.js"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/core": "^8.6.2",
     "express": "^5.1.0",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
@@ -19,6 +21,8 @@
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@capacitor/assets": "^4.0.0",
+    "@capacitor/cli": "^8.6.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.7.0",

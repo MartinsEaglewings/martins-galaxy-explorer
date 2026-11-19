@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Martins Galaxy Explorer</string>
+    <string name="title_activity_main">Martins Galaxy Explorer</string>
+    <string name="package_name">com.martins.galaxyexplorer</string>
+    <string name="custom_url_scheme">com.martins.galaxyexplorer</string>
+</resources>

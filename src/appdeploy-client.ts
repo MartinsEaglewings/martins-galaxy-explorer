@@ -1,6 +1,29 @@
+// Android APK builds provide this URL at build time.
+// Normal website builds leave it unset and retain their existing relative URLs.
+const configuredServer = (
+  (import.meta as ImportMeta & {
+    env?: Record<string, string | undefined>
+  }).env?.VITE_GAME_SERVER_URL || ''
+).replace(/\/+$/, '');
+
+const resolveApiUrl = (path: string) =>
+  configuredServer ? `${configuredServer}${path}` : path;
+
+const resolveWebSocketUrl = () => {
+  if (configuredServer) {
+    return `${configuredServer
+      .replace(/^https:/i, 'wss:')
+      .replace(/^http:/i, 'ws:')}/ws`;
+  }
+
+
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${location.host}/ws`;
+};
+
 const api = {
   async request(method: string, path: string, body?: unknown) {
-    const response = await fetch(path, {
+    const response = await fetch(resolveApiUrl(path), {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -30,8 +53,6 @@ const api = {
 
 const ws = {
   connect(pilotId?: string, pilotName?: string) {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-
     let socket: WebSocket | null = null;
     let currentConnectionId = '';
     let connected = false;
@@ -71,7 +92,7 @@ const ws = {
       let nextSocket: WebSocket;
 
       try {
-        nextSocket = new WebSocket(`${protocol}//${location.host}/ws`);
+        nextSocket = new WebSocket(resolveWebSocketUrl());
       } catch {
         errorHandler?.();
         scheduleReconnect();
